@@ -117,60 +117,6 @@ out:
 	return ret;
 }
 
-static int chcr_ktls_update_connection_state(struct chcr_ktls_info *tx_info,
-					     int new_state)
-{
-	/* This function can be called from both rx (interrupt context) and tx
-	 * queue contexts.
-	 */
-	spin_lock_bh(&tx_info->lock);
-	switch (tx_info->connection_state) {
-	case KTLS_CONN_CLOSED:
-		tx_info->connection_state = new_state;
-		break;
-
-	case KTLS_CONN_ACT_OPEN_REQ:
-		/* only go forward if state is greater than current state. */
-		if (new_state <= tx_info->connection_state)
-			break;
-		/* update to the next state and also initialize TCB */
-		tx_info->connection_state = new_state;
-		/* FALLTHRU */
-	case KTLS_CONN_ACT_OPEN_RPL:
-		/* if we are stuck in this state, means tcb init might not
-		 * received by HW, try sending it again.
-		 */
-		if (!chcr_init_tcb_fields(tx_info))
-			tx_info->connection_state = KTLS_CONN_SET_TCB_REQ;
-		break;
-
-	case KTLS_CONN_SET_TCB_REQ:
-		/* only go forward if state is greater than current state. */
-		if (new_state <= tx_info->connection_state)
-			break;
-		/* update to the next state and check if l2t_state is valid  */
-		tx_info->connection_state = new_state;
-		/* FALLTHRU */
-	case KTLS_CONN_SET_TCB_RPL:
-		/* Check if l2t state is valid, then move to ready state. */
-		if (cxgb4_check_l2t_valid(tx_info->l2te)) {
-			tx_info->connection_state = KTLS_CONN_TX_READY;
-			atomic64_inc(&tx_info->adap->chcr_stats.ktls_tx_ctx);
-		}
-		break;
-
-	case KTLS_CONN_TX_READY:
-		/* nothing to be done here */
-		break;
-
-	default:
-		pr_err("unknown KTLS connection state\n");
-		break;
-	}
-	spin_unlock_bh(&tx_info->lock);
-
-	return tx_info->connection_state;
-}
 /*
  * chcr_ktls_act_open_req: creates TCB entry for ipv4 connection.
  * @sk - tcp socket.
@@ -318,15 +264,21 @@ static int chcr_setup_connection(struct sock *sk,
 	 * success, if any other return type clear atid and return that failure.
 	 */
 	if (ret) {
-		if (ret == NET_XMIT_CN)
+		if (ret == NET_XMIT_CN) {
 			ret = 0;
-		else
+		} else {
+#if IS_ENABLED(CONFIG_IPV6)
+			/* clear clip entry */
+			if (tx_info->ip_family == AF_INET6)
+				cxgb4_clip_release(tx_info->netdev,
+						(const u32 *)
+						&tx_info->sk->sk_v6_daddr.in6_u.u6_addr8,
+						1);
+#endif
 			cxgb4_free_atid(t, atid);
-		goto out;
+		}
 	}
 
-	/* update the connection state */
-	chcr_ktls_update_connection_state(tx_info, KTLS_CONN_ACT_OPEN_REQ);
 out:
 	return ret;
 }
@@ -394,10 +346,6 @@ void chcr_ktls_dev_del(struct net_device *netdev,
 		return;
 	sk = tx_info->sk;
 
-	spin_lock(&tx_info->lock);
-	tx_info->connection_state = KTLS_CONN_CLOSED;
-	spin_unlock(&tx_info->lock);
-
 	/* clear l2t entry */
 	if (tx_info->l2te)
 		cxgb4_l2t_release(tx_info->l2te);
@@ -455,26 +403,15 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 	adap = pi->adapter;
 	if (direction == TLS_OFFLOAD_CTX_DIR_RX) {
 		pr_err("not expecting for RX direction\n");
-		ret = -EINVAL;
 		goto out;
 	}
-	if (tx_ctx->chcr_info) {
-		ret = -EINVAL;
+
+	if (tx_ctx->chcr_info)
 		goto out;
-	}
 
 	tx_info = kvzalloc(sizeof(*tx_info), GFP_KERNEL);
-	if (!tx_info) {
-		ret = -ENOMEM;
+	if (!tx_info)
 		goto out;
-	}
-
-	spin_lock_init(&tx_info->lock);
-
-	/* clear connection state */
-	spin_lock(&tx_info->lock);
-	tx_info->connection_state = KTLS_CONN_CLOSED;
-	spin_unlock(&tx_info->lock);
 
 	tx_info->sk = sk;
 	/* initialize tid and atid to -1, 0 is a also a valid id. */
@@ -490,7 +427,7 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 
 	tx_info->rx_qid = chcr_get_first_rx_qid(adap);
 	if (unlikely(tx_info->rx_qid < 0))
-		goto out2;
+		goto free_tx_info;
 
 	tx_info->prev_seq = start_offload_tcp_sn;
 	tx_info->tcp_start_seq_number = start_offload_tcp_sn;
@@ -498,7 +435,7 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 	/* save crypto keys */
 	ret = chcr_ktls_save_keys(tx_info, crypto_info, direction);
 	if (ret < 0)
-		goto out2;
+		goto free_tx_info;
 
 	/* get peer ip */
 	if (sk->sk_family == AF_INET) {
@@ -517,13 +454,13 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 	dst = sk_dst_get(sk);
 	if (!dst) {
 		pr_err("DST entry not found\n");
-		goto out2;
+		goto free_tx_info;
 	}
 	n = dst_neigh_lookup(dst, daaddr);
 	if (!n || !n->dev) {
 		pr_err("neighbour not found\n");
 		dst_release(dst);
-		goto out2;
+		goto free_tx_info;
 	}
 	tx_info->l2te  = cxgb4_l2t_get(adap->l2t, n, n->dev, 0);
 
@@ -532,31 +469,70 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 
 	if (!tx_info->l2te) {
 		pr_err("l2t entry not found\n");
-		goto out2;
+		goto free_tx_info;
 	}
 
-	tx_ctx->chcr_info = tx_info;
+	/* Driver shouldn't be removed until any single connection exists */
+	if (!try_module_get(THIS_MODULE))
+		goto free_l2t;
 
+	init_completion(&tx_info->completion);
 	/* create a filter and call cxgb4_l2t_send to send the packet out, which
 	 * will take care of updating l2t entry in hw if not already done.
 	 */
-	ret = chcr_setup_connection(sk, tx_info);
-	if (ret)
-		goto out2;
+	tx_info->open_pending = true;
 
-	/* Driver shouldn't be removed until any single connection exists */
-	if (!try_module_get(THIS_MODULE)) {
-		ret = -EINVAL;
-		goto out2;
-	}
+	if (chcr_setup_connection(sk, tx_info))
+		goto put_module;
+
+	/* Wait for reply */
+        ret = wait_for_completion_timeout(&tx_info->completion, 10 * HZ);
+        if (!ret || tx_info->open_pending)
+                goto put_module;
+
+       /* initialize tcb */
+       reinit_completion(&tx_info->completion);
+       tx_info->open_pending = true;
+
+       if (chcr_init_tcb_fields(tx_info))
+               goto free_tid;
+
+       /* Wait for reply */
+        ret = wait_for_completion_timeout(&tx_info->completion, 10 * HZ);
+        if (!ret || tx_info->open_pending)
+                goto free_tid;
+
+	if (!cxgb4_check_l2t_valid(tx_info->l2te))
+		goto close_tcb;
 
 	atomic64_inc(&adap->chcr_stats.ktls_tx_connection_open);
+	tx_ctx->chcr_info = tx_info;
+
 	return 0;
-out2:
+
+close_tcb:
+	chcr_ktls_mark_tcb_close(tx_info);
+free_tid:
+#if IS_ENABLED(CONFIG_IPV6)
+	/* clear clip entry */
+	if (tx_info->ip_family == AF_INET6)
+		cxgb4_clip_release(netdev,
+				(const u32 *)&sk->sk_v6_daddr.in6_u.u6_addr8,
+				1);
+#endif
+	cxgb4_remove_tid(&tx_info->adap->tids, tx_info->tx_chan,
+			tx_info->tid, tx_info->ip_family);
+
+put_module:
+	/* release module refcount */
+	module_put(THIS_MODULE);
+free_l2t:
+	cxgb4_l2t_release(tx_info->l2te);
+free_tx_info:
 	kvfree(tx_info);
 out:
 	atomic64_inc(&adap->chcr_stats.ktls_tx_connection_fail);
-	return ret;
+	return -1;
 }
 
 /*
@@ -622,16 +598,28 @@ int chcr_ktls_cpl_act_open_rpl(struct adapter *adap, unsigned char *input)
 		return -1;
 	}
 
+	cxgb4_free_atid(t, atid);
+	tx_info->atid = -1;
+
 	if (!status) {
 		tx_info->tid = tid;
 		cxgb4_insert_tid(t, tx_info, tx_info->tid, tx_info->ip_family);
 
-		cxgb4_free_atid(t, atid);
-		tx_info->atid = -1;
 		/* update the connection state */
-		chcr_ktls_update_connection_state(tx_info,
-						  KTLS_CONN_ACT_OPEN_RPL);
+	} else {
+#if IS_ENABLED(CONFIG_IPV6)
+		/* clear clip entry */
+		if (tx_info->ip_family == AF_INET6)
+			cxgb4_clip_release(tx_info->netdev,
+					(const u32 *)
+					&tx_info->sk->sk_v6_daddr.in6_u.u6_addr8,
+					1);
+#endif
+
 	}
+
+	tx_info->open_pending = false;
+	complete(&tx_info->completion);
 	return 0;
 }
 
@@ -653,8 +641,8 @@ int chcr_ktls_cpl_set_tcb_rpl(struct adapter *adap, unsigned char *input)
 		pr_err("tx_info or atid is not correct\n");
 		return -1;
 	}
-	/* update the connection state */
-	chcr_ktls_update_connection_state(tx_info, KTLS_CONN_SET_TCB_RPL);
+	tx_info->open_pending = false;
+	complete(&tx_info->completion);
 	return 0;
 }
 
@@ -1836,7 +1824,6 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 	u32 tls_end_offset, tcp_seq;
 	struct tls_context *tls_ctx;
 	struct sk_buff *local_skb;
-	int new_connection_state;
 	struct sge_eth_txq *q;
 	struct adapter *adap;
 	unsigned long flags;
@@ -1857,15 +1844,6 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 	tx_info = tx_ctx->chcr_info;
 
 	if (unlikely(!tx_info))
-		goto out;
-
-	/* check the connection state, we don't need to pass new connection
-	 * state, state machine will check and update the new state if it is
-	 * stuck due to responses not received from HW.
-	 * Start the tx handling only if state is KTLS_CONN_TX_READY.
-	 */
-	new_connection_state = chcr_ktls_update_connection_state(tx_info, 0);
-	if (new_connection_state != KTLS_CONN_TX_READY)
 		goto out;
 
 	/* don't touch the original skb, make a new skb to extract each records
