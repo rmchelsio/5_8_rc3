@@ -234,8 +234,9 @@ static inline void cxgb4_free_eotid(struct tid_info *t, u32 eotid)
 	atomic_dec(&t->eotids_in_use);
 }
 
-int cxgb4_alloc_atid(struct tid_info *t, void *data);
-int cxgb4_alloc_stid(struct tid_info *t, int family, void *data);
+int cxgb4_alloc_atid(struct tid_info *t, void *data, u16 uld);
+int cxgb4_alloc_stid(struct tid_info *t, int family, void *data, u16 uld);
+
 int cxgb4_alloc_sftid(struct tid_info *t, int family, void *data);
 void cxgb4_free_atid(struct tid_info *t, unsigned int atid);
 void cxgb4_free_stid(struct tid_info *t, unsigned int stid, int family);
@@ -359,6 +360,22 @@ struct cxgb4_virt_res {                      /* virtualized HW resources */
 	struct cxgb4_range ppod_edram;
 };
 
+#ifdef CONFIG_CHELSIO_TLS_DEVICE
+struct chcr_stats_ktls_port_debug {
+       atomic64_t ktls_tx_connection_open;
+       atomic64_t ktls_tx_connection_fail;
+       atomic64_t ktls_tx_connection_close;
+       atomic64_t ktls_tx_encrypted_packets;
+       atomic64_t ktls_tx_encrypted_bytes;
+       atomic64_t ktls_tx_ctx;
+       atomic64_t ktls_tx_ooo;
+       atomic64_t ktls_tx_skip_no_sync_data;
+       atomic64_t ktls_tx_drop_no_sync_data;
+       atomic64_t ktls_tx_drop_bypass_req;
+};
+#endif
+
+
 struct chcr_stats_debug {
 	atomic_t cipher_rqst;
 	atomic_t digest_rqst;
@@ -371,23 +388,13 @@ struct chcr_stats_debug {
 	atomic_t tls_pdu_rx;
 	atomic_t tls_key;
 #ifdef CONFIG_CHELSIO_TLS_DEVICE
-	atomic64_t ktls_tx_connection_open;
-	atomic64_t ktls_tx_connection_fail;
-	atomic64_t ktls_tx_connection_close;
+	struct chcr_stats_ktls_port_debug ktls_port[4 /*MAX_NPORTS*/];
 	atomic64_t ktls_tx_send_records;
 	atomic64_t ktls_tx_end_pkts;
 	atomic64_t ktls_tx_start_pkts;
 	atomic64_t ktls_tx_middle_pkts;
-	atomic64_t ktls_tx_retransmit_pkts;
 	atomic64_t ktls_tx_complete_pkts;
 	atomic64_t ktls_tx_trimmed_pkts;
-	atomic64_t ktls_tx_encrypted_packets;
-	atomic64_t ktls_tx_encrypted_bytes;
-	atomic64_t ktls_tx_ctx;
-	atomic64_t ktls_tx_ooo;
-	atomic64_t ktls_tx_skip_no_sync_data;
-	atomic64_t ktls_tx_drop_no_sync_data;
-	atomic64_t ktls_tx_drop_bypass_req;
 
 #endif
 };

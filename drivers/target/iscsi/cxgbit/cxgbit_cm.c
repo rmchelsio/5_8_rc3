@@ -348,7 +348,8 @@ __cxgbit_setup_cdev_np(struct cxgbit_device *cdev, struct cxgbit_np *cnp)
 	if (!test_bit(CDEV_STATE_UP, &cdev->flags))
 		return -EINVAL;
 
-	stid = cxgb4_alloc_stid(cdev->lldi.tids, ss_family, cnp);
+	stid = cxgb4_alloc_stid(cdev->lldi.tids, ss_family, cnp,
+				CXGB4_ULD_ISCSIT);
 	if (stid < 0)
 		return -EINVAL;
 

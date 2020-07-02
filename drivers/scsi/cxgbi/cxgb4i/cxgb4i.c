@@ -1722,7 +1722,7 @@ static int init_act_open(struct cxgbi_sock *csk)
 	if (!(n->nud_state & NUD_VALID))
 		neigh_event_send(n, NULL);
 
-	csk->atid = cxgb4_alloc_atid(lldi->tids, csk);
+	csk->atid = cxgb4_alloc_atid(lldi->tids, csk, CXGB4_ULD_ISCSI);
 	if (csk->atid < 0) {
 		pr_err("%s, NO atid available.\n", ndev->name);
 		goto rel_resource_without_clip;

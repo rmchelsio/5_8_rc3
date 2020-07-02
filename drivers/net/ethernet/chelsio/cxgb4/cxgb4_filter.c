@@ -1428,7 +1428,7 @@ static int cxgb4_set_hash_filter(struct net_device *dev,
 		}
 	}
 
-	atid = cxgb4_alloc_atid(t, f);
+	atid = cxgb4_alloc_atid(t, f, 0);
 	if (atid < 0) {
 		ret = atid;
 		goto free_smt;

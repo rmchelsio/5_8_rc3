@@ -2184,7 +2184,8 @@ static int c4iw_reconnect(struct c4iw_ep *ep)
 	/*
 	 * Allocate an active TID to initiate a TCP connection.
 	 */
-	ep->atid = cxgb4_alloc_atid(ep->com.dev->rdev.lldi.tids, ep);
+	ep->atid = cxgb4_alloc_atid(ep->com.dev->rdev.lldi.tids, ep,
+				    CXGB4_ULD_RDMA);
 	if (ep->atid == -1) {
 		pr_err("%s - cannot alloc atid\n", __func__);
 		err = -ENOMEM;
@@ -3352,7 +3353,7 @@ int c4iw_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 	/*
 	 * Allocate an active TID to initiate a TCP connection.
 	 */
-	ep->atid = cxgb4_alloc_atid(dev->rdev.lldi.tids, ep);
+	ep->atid = cxgb4_alloc_atid(dev->rdev.lldi.tids, ep, CXGB4_ULD_RDMA);
 	if (ep->atid == -1) {
 		pr_err("%s - cannot alloc atid\n", __func__);
 		err = -ENOMEM;
@@ -3565,7 +3566,8 @@ int c4iw_create_listen(struct iw_cm_id *cm_id, int backlog)
 					     cm_id->m_local_addr.ss_family, ep);
 	else
 		ep->stid = cxgb4_alloc_stid(dev->rdev.lldi.tids,
-					    cm_id->m_local_addr.ss_family, ep);
+					    cm_id->m_local_addr.ss_family, ep,
+					    CXGB4_ULD_RDMA);
 
 	if (ep->stid == -1) {
 		pr_err("%s - cannot alloc stid\n", __func__);

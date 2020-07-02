@@ -668,7 +668,7 @@ int chtls_listen_start(struct chtls_dev *cdev, struct sock *sk)
 	ctx->state = T4_LISTEN_START_PENDING;
 	skb_queue_head_init(&ctx->synq);
 
-	stid = cxgb4_alloc_stid(cdev->tids, sk->sk_family, ctx);
+	stid = cxgb4_alloc_stid(cdev->tids, sk->sk_family, ctx, CXGB4_ULD_TLS);
 	if (stid < 0)
 		goto free_ctx;
 

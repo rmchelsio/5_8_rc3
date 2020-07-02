@@ -1292,9 +1292,25 @@ static int setup_debugfs(struct adapter *adap)
 /*
  * Allocate an active-open TID and set it to the supplied value.
  */
-int cxgb4_alloc_atid(struct tid_info *t, void *data)
+int cxgb4_alloc_atid(struct tid_info *t, void *data, u16 uld)
 {
+
+#if defined(CONFIG_CHELSIO_TLS_DEVICE)
+	struct adapter *adap = container_of(t, struct adapter, tids);
+#endif
 	int atid = -1;
+
+#if defined(CONFIG_CHELSIO_TLS_DEVICE)
+	/* if ktls connection is up, don't give atid to any other
+	 * ULD, so that no connection should be allowed to be up.
+	 */
+	if (uld && uld != CXGB4_ULD_CRYPTO &&
+			refcount_read(&adap->chcr_ktls.ktls_refcount)) {
+		dev_err(adap->pdev_dev, "ktls is up, can't use offload\n");
+		return atid;
+	}
+#endif
+
 
 	spin_lock_bh(&t->atid_lock);
 	if (t->afree) {
@@ -1328,9 +1344,24 @@ EXPORT_SYMBOL(cxgb4_free_atid);
 /*
  * Allocate a server TID and set it to the supplied value.
  */
-int cxgb4_alloc_stid(struct tid_info *t, int family, void *data)
+int cxgb4_alloc_stid(struct tid_info *t, int family, void *data, u16 uld)
 {
+#if defined(CONFIG_CHELSIO_TLS_DEVICE)
+	struct adapter *adap = container_of(t, struct adapter, tids);
+#endif
 	int stid;
+
+#if defined(CONFIG_CHELSIO_TLS_DEVICE)
+	/* if ktls connection is up, don't give stid to any other
+	 * ULD, so that no connection should be allowed to be up.
+	 */
+	stid = -1;
+	if (uld && uld != CXGB4_ULD_CRYPTO &&
+	    refcount_read(&adap->chcr_ktls.ktls_refcount)) {
+		dev_err(adap->pdev_dev, "ktls is up, can't use offload\n");
+		return stid;
+	}
+#endif
 
 	spin_lock_bh(&t->stid_lock);
 	if (family == PF_INET) {

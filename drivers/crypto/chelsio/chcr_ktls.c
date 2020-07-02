@@ -231,7 +231,7 @@ static int chcr_setup_connection(struct sock *sk,
 	struct tid_info *t = &tx_info->adap->tids;
 	int atid, ret = 0;
 
-	atid = cxgb4_alloc_atid(t, tx_info);
+	atid = cxgb4_alloc_atid(t, tx_info, CXGB4_ULD_CRYPTO);
 	if (atid == -1)
 		return -EINVAL;
 
@@ -340,6 +340,7 @@ void chcr_ktls_dev_del(struct net_device *netdev,
 	struct chcr_ktls_ofld_ctx_tx *tx_ctx =
 				chcr_get_ktls_tx_context(tls_ctx);
 	struct chcr_ktls_info *tx_info = tx_ctx->chcr_info;
+	struct chcr_stats_ktls_port_debug *port_stats;
 	struct sock *sk;
 
 	if (!tx_info)
@@ -366,7 +367,8 @@ void chcr_ktls_dev_del(struct net_device *netdev,
 				 tx_info->tid, tx_info->ip_family);
 	}
 
-	atomic64_inc(&tx_info->adap->chcr_stats.ktls_tx_connection_close);
+	port_stats = &tx_info->adap->chcr_stats.ktls_port[tx_info->port_id];
+	atomic64_inc(&port_stats->ktls_tx_connection_close);
 	kvfree(tx_info);
 	tx_ctx->chcr_info = NULL;
 	/* release module refcount */
@@ -387,6 +389,7 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 		      struct tls_crypto_info *crypto_info,
 		      u32 start_offload_tcp_sn)
 {
+	struct chcr_stats_ktls_port_debug *port_stats;
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
 	struct chcr_ktls_ofld_ctx_tx *tx_ctx;
 	struct chcr_ktls_info *tx_info;
@@ -401,6 +404,8 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 
 	pi = netdev_priv(netdev);
 	adap = pi->adapter;
+	port_stats = &adap->chcr_stats.ktls_port[pi->port_id];
+
 	if (direction == TLS_OFFLOAD_CTX_DIR_RX) {
 		pr_err("not expecting for RX direction\n");
 		goto out;
@@ -408,6 +413,8 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 
 	if (tx_ctx->chcr_info)
 		goto out;
+
+	atomic64_inc(&port_stats->ktls_tx_connection_open);
 
 	tx_info = kvzalloc(sizeof(*tx_info), GFP_KERNEL);
 	if (!tx_info)
@@ -505,7 +512,7 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 	if (!cxgb4_check_l2t_valid(tx_info->l2te))
 		goto close_tcb;
 
-	atomic64_inc(&adap->chcr_stats.ktls_tx_connection_open);
+	atomic64_inc(&port_stats->ktls_tx_ctx);
 	tx_ctx->chcr_info = tx_info;
 
 	return 0;
@@ -531,7 +538,7 @@ free_l2t:
 free_tx_info:
 	kvfree(tx_info);
 out:
-	atomic64_inc(&adap->chcr_stats.ktls_tx_connection_fail);
+	atomic64_inc(&port_stats->ktls_tx_connection_fail);
 	return -1;
 }
 
@@ -744,6 +751,7 @@ static int chcr_ktls_xmit_tcb_cpls(struct chcr_ktls_info *tx_info,
 				   u64 tcp_ack, u64 tcp_win)
 {
 	bool first_wr = ((tx_info->prev_ack == 0) && (tx_info->prev_win == 0));
+	struct chcr_stats_ktls_port_debug *port_stats;
 	u32 len, cpl = 0, ndesc, wr_len;
 	struct fw_ulptx_wr *wr;
 	int credits;
@@ -777,12 +785,14 @@ static int chcr_ktls_xmit_tcb_cpls(struct chcr_ktls_info *tx_info,
 	/* reset snd una if it's a re-transmit pkt */
 	if (tcp_seq != tx_info->prev_seq) {
 		/* reset snd_una */
+		port_stats =
+			&tx_info->adap->chcr_stats.ktls_port[tx_info->port_id];
 		pos = chcr_write_cpl_set_tcb_ulp(tx_info, q, tx_info->tid, pos,
 						 TCB_SND_UNA_RAW_W,
 						 TCB_SND_UNA_RAW_V
 						 (TCB_SND_UNA_RAW_M),
 						 TCB_SND_UNA_RAW_V(0), 0);
-		atomic64_inc(&tx_info->adap->chcr_stats.ktls_tx_ooo);
+		atomic64_inc(&port_stats->ktls_tx_ooo);
 		cpl++;
 	}
 	/* update ack */
@@ -1815,6 +1825,7 @@ out:
 /* nic tls TX handler */
 int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 {
+	struct chcr_stats_ktls_port_debug *port_stats;
 	struct chcr_ktls_ofld_ctx_tx *tx_ctx;
 	struct tcphdr *th = tcp_hdr(skb);
 	int data_len, qidx, ret = 0, mss;
@@ -1856,6 +1867,7 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	adap = tx_info->adap;
 	stats = &adap->chcr_stats;
+	port_stats = &stats->ktls_port[tx_info->port_id];
 
 	qidx = skb->queue_mapping;
 	q = &adap->sge.ethtxq[qidx + tx_info->first_qset];
@@ -1901,13 +1913,13 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 		 */
 		if (unlikely(!record)) {
 			spin_unlock_irqrestore(&tx_ctx->base.lock, flags);
-			atomic64_inc(&stats->ktls_tx_drop_no_sync_data);
+			atomic64_inc(&port_stats->ktls_tx_drop_no_sync_data);
 			goto out;
 		}
 
 		if (unlikely(tls_record_is_start_marker(record))) {
 			spin_unlock_irqrestore(&tx_ctx->base.lock, flags);
-			atomic64_inc(&stats->ktls_tx_skip_no_sync_data);
+			atomic64_inc(&port_stats->ktls_tx_skip_no_sync_data);
 			goto out;
 		}
 
@@ -1979,8 +1991,8 @@ clear_ref:
 
 	tx_info->prev_seq = ntohl(th->seq) + skb->data_len;
 
-	atomic64_inc(&stats->ktls_tx_encrypted_packets);
-	atomic64_add(skb->data_len, &stats->ktls_tx_encrypted_bytes);
+	atomic64_inc(&port_stats->ktls_tx_encrypted_packets);
+	atomic64_add(skb->data_len, &port_stats->ktls_tx_encrypted_bytes);
 
 	/* tcp finish is set, send a separate tcp msg including all the options
 	 * as well.
