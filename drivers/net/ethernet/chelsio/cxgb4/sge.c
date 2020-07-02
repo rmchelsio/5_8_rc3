@@ -48,6 +48,9 @@
 #ifdef CONFIG_CHELSIO_T4_FCOE
 #include <scsi/fc/fc_fcoe.h>
 #endif /* CONFIG_CHELSIO_T4_FCOE */
+#if defined(CONFIG_CHELSIO_TLS_DEVICE)
+#include <net/tls.h>
+#endif
 #include "cxgb4.h"
 #include "t4_regs.h"
 #include "t4_values.h"
@@ -1422,7 +1425,12 @@ static netdev_tx_t cxgb4_eth_xmit(struct sk_buff *skb, struct net_device *dev)
 #endif /* CHELSIO_IPSEC_INLINE */
 
 #ifdef CONFIG_CHELSIO_TLS_DEVICE
-	if (skb->decrypted)
+	/* send to chcr uld if decrypted bit is set, skb has socket and it is
+	 * tx offloaded, and if packet has some data bytes to send it for
+	 * encryption.
+	 */
+	if (skb->decrypted && skb->sk && tls_is_sk_tx_device_offloaded(skb->sk)
+	    && (skb->len - (skb_transport_offset(skb) + tcp_hdrlen(skb))))
 		return adap->uld[CXGB4_ULD_CRYPTO].tx_handler(skb, dev);
 #endif /* CHELSIO_TLS_DEVICE */
 
