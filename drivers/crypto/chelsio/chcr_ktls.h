@@ -23,6 +23,7 @@
 
 #define CHCR_KTLS_WR_SIZE	(CHCR_PLAIN_TX_DATA_LEN +\
 				 sizeof(struct cpl_tx_sec_pdu))
+#define EFALLBACK          35
 
 struct chcr_ktls_info {
 	struct sock *sk;
