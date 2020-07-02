@@ -611,8 +611,7 @@ int chcr_ktls_cpl_act_open_rpl(struct adapter *adap, unsigned char *input)
 	if (!status) {
 		tx_info->tid = tid;
 		cxgb4_insert_tid(t, tx_info, tx_info->tid, tx_info->ip_family);
-
-		/* update the connection state */
+		tx_info->open_pending = false;
 	} else {
 #if IS_ENABLED(CONFIG_IPV6)
 		/* clear clip entry */
@@ -622,10 +621,8 @@ int chcr_ktls_cpl_act_open_rpl(struct adapter *adap, unsigned char *input)
 					&tx_info->sk->sk_v6_daddr.in6_u.u6_addr8,
 					1);
 #endif
-
 	}
 
-	tx_info->open_pending = false;
 	complete(&tx_info->completion);
 	return 0;
 }
