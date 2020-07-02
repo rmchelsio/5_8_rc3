@@ -6111,7 +6111,9 @@ static int cxgb4_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 
 	mutex_lock(&uld_mutex);
 	if (!adap->uld[CXGB4_ULD_CRYPTO].handle) {
-		dev_err(adap->pdev_dev, "chcr driver is not loaded\n");
+#if defined(CONFIG_DYNAMIC_DEBUG)
+		dev_dbg(adap->pdev_dev, "chcr driver is not loaded\n");
+#endif
 		ret = -EOPNOTSUPP;
 		goto out_unlock;
 	}
@@ -6148,7 +6150,9 @@ static void cxgb4_ktls_dev_del(struct net_device *netdev,
 
 	mutex_lock(&uld_mutex);
 	if (!adap->uld[CXGB4_ULD_CRYPTO].handle) {
-		dev_err(adap->pdev_dev, "chcr driver is not loaded\n");
+#if defined(CONFIG_DYNAMIC_DEBUG)
+		dev_dbg(adap->pdev_dev, "chcr driver is not loaded\n");
+#endif
 		goto out_unlock;
 	}
 
