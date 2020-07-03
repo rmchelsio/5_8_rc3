@@ -3510,6 +3510,8 @@ static int chcr_stats_show(struct seq_file *seq, void *v)
 		   atomic64_read(&adap->chcr_stats.ktls_tx_trimmed_pkts));
 	seq_printf(seq, "TX sw fallback :                  %20llu\n",
 		   atomic64_read(&adap->chcr_stats.ktls_tx_fallback));
+	seq_printf(seq, "TX linear skb :                   %20llu\n",
+		   atomic64_read(&adap->chcr_stats.ktls_tx_linear_skb));
 	while (i < MAX_NPORTS) {
 		ktls_port = &adap->chcr_stats.ktls_port[i];
 		seq_printf(seq, "Port %d\n", i);
