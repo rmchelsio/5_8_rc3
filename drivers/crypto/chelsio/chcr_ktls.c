@@ -1940,17 +1940,17 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 			if (tls_end_offset < TLS_CIPHER_AES_GCM_128_TAG_SIZE)
 				tx_max = record->end_seq - 
 					 TLS_CIPHER_AES_GCM_128_TAG_SIZE;
-			if (chcr_ktls_xmit_tcb_cpls(tx_info, q, tx_max,
-						    ntohl(th->ack_seq),
-						    ntohs(th->window),
-						    tls_end_offset != record->len)) {
-				chcr_free_nonlinear_skb(nonlinear_skb, local_skb);
-				/* clear the frag ref count which increased locally before */
-				for (i = 0; i < record->num_frags; i++) {
-					/* clear the frag ref count */
-					__skb_frag_unref(&record->frags[i]);
-				}
-				goto out;
+			ret = chcr_ktls_xmit_tcb_cpls(tx_info, q, tx_max,
+						      ntohl(th->ack_seq),
+						      ntohs(th->window),
+						      tls_end_offset !=
+						      record->len);
+			if (ret) {
+				/* free linear/nonlinear skb and move to
+				 * clear ref.
+				 */
+				dev_kfree_skb_any(local_skb);
+				goto clear_ref;
 			}
 		}
 		/* local skb is used while using nonlinear skb, skb_offset will
@@ -1968,8 +1968,10 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 						 GFP_KERNEL);
 				if (unlikely(!nskb)) {
 					ret = -ENOMEM;
-					chcr_free_nonlinear_skb(nonlinear_skb,
-								local_skb);
+					/* free linear/nonlinear skb and move to
+					 * clear ref.
+					 */
+					dev_kfree_skb_any(local_skb);
 					goto clear_ref;
 				}
 				if (nonlinear_skb)
