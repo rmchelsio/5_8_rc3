@@ -1782,11 +1782,15 @@ int chcr_ktls_sw_fallback(struct sk_buff *skb, struct chcr_ktls_info *tx_info,
 	u32 data_len, skb_offset, mss;
 	struct sk_buff *nskb;
 	struct tcphdr *th;
+
 	nskb = tls_encrypt_skb(skb);
-	if (!nskb) {
-		dev_kfree_skb_any(skb);
+
+	if (!nskb)
 		return 0;
-	}
+
+	if (nskb == skb)
+		goto out;
+
 	th = tcp_hdr(nskb);
 	skb_offset =  skb_transport_offset(nskb) + tcp_hdrlen(nskb);
 	data_len = nskb->len - skb_offset;
