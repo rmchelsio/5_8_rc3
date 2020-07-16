@@ -1785,14 +1785,13 @@ int chcr_ktls_sw_fallback(struct sk_buff *skb, struct chcr_ktls_info *tx_info,
 	nskb = tls_encrypt_skb(skb);
 	if (!nskb) {
 		dev_kfree_skb_any(skb);
-		goto out;
+		return 0;
 	}
 	th = tcp_hdr(nskb);
 	skb_offset =  skb_transport_offset(nskb) + tcp_hdrlen(nskb);
 	data_len = nskb->len - skb_offset;
 
 	mss = skb_is_gso(nskb) ? skb_shinfo(nskb)->gso_size : data_len;
-	skb = nskb;
 	if (chcr_ktls_tx_plaintxt(tx_info, nskb, ntohl(th->seq),
 				mss, !th->fin && th->psh, q,
 				tx_info->port_id,
@@ -1801,9 +1800,6 @@ int chcr_ktls_sw_fallback(struct sk_buff *skb, struct chcr_ktls_info *tx_info,
 		goto out;
 
 	tx_info->prev_seq = ntohl(th->seq) + data_len;
-	if (th->fin)
-		chcr_ktls_write_tcp_options(tx_info, skb, q,
-				tx_info->tx_chan);
 	atomic64_inc(&tx_info->adap->chcr_stats.ktls_tx_fallback);
 	return 0;
 out:
