@@ -1591,6 +1591,8 @@ static int chcr_end_part_handler(struct chcr_ktls_info *tx_info,
 		 * accordingly.
 		 */
 		tcp_seq = tls_record_start_seq(record);
+		/* reset skb offset */
+		skb_offset = 0;
 
 		atomic64_inc(&tx_info->adap->chcr_stats.ktls_tx_end_pkts);
 	}
@@ -1678,6 +1680,8 @@ static int chcr_short_record_handler(struct chcr_ktls_info *tx_info,
 		dev_kfree_skb_any(skb);
 		skb = tmp_skb;
 		skb_data_len = trimmed_len;
+		/* reset skb offset */
+		skb_offset = 0;
 		atomic64_inc(&tx_info->adap->chcr_stats.ktls_tx_trimmed_pkts);
 	}
 
