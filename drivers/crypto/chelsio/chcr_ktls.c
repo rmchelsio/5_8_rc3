@@ -347,8 +347,7 @@ static int chcr_setup_connection(struct sock *sk,
 		} else {
 			tx_info->ip_family = AF_INET6;
 			ret = cxgb4_clip_get(tx_info->netdev,
-					     (const u32 *)
-					     &sk->sk_v6_rcv_saddr.s6_addr,
+					     (const u32 *)&sk->sk_v6_rcv_saddr,
 					     1);
 			if (ret)
 				goto out;
@@ -368,9 +367,9 @@ static int chcr_setup_connection(struct sock *sk,
 			/* clear clip entry */
 			if (tx_info->ip_family == AF_INET6)
 				cxgb4_clip_release(tx_info->netdev,
-						(const u32 *)
-						&tx_info->sk->sk_v6_daddr.in6_u.u6_addr8,
-						1);
+						   (const u32 *)
+						   &sk->sk_v6_rcv_saddr,
+						   1);
 #endif
 			cxgb4_free_atid(t, atid);
 		}
@@ -438,13 +437,11 @@ void chcr_ktls_dev_del(struct net_device *netdev,
 				chcr_get_ktls_tx_context(tls_ctx);
 	struct chcr_ktls_info *tx_info = tx_ctx->chcr_info;
 	struct chcr_stats_ktls_port_debug *port_stats;
-	struct sock *sk;
 
 	if (!tx_info)
 		return;
 
 	tx_ctx->chcr_info = NULL;
-	sk = tx_info->sk;
 
 	/* clear l2t entry */
 	if (tx_info->l2te)
@@ -453,8 +450,8 @@ void chcr_ktls_dev_del(struct net_device *netdev,
 #if IS_ENABLED(CONFIG_IPV6)
 	/* clear clip entry */
 	if (tx_info->ip_family == AF_INET6)
-		cxgb4_clip_release(netdev,
-				   (const u32 *)&sk->sk_v6_daddr.in6_u.u6_addr8,
+		cxgb4_clip_release(netdev, (const u32 *)
+				   &tx_info->sk->sk_v6_rcv_saddr,
 				   1);
 #endif
 
@@ -621,9 +618,9 @@ free_tid:
 #if IS_ENABLED(CONFIG_IPV6)
 	/* clear clip entry */
 	if (tx_info->ip_family == AF_INET6)
-		cxgb4_clip_release(netdev,
-				(const u32 *)&sk->sk_v6_daddr.in6_u.u6_addr8,
-				1);
+		cxgb4_clip_release(netdev, (const u32 *)
+				   &sk->sk_v6_rcv_saddr,
+				   1);
 #endif
 	cxgb4_remove_tid(&tx_info->adap->tids, tx_info->tx_chan,
 			tx_info->tid, tx_info->ip_family);
@@ -714,10 +711,9 @@ int chcr_ktls_cpl_act_open_rpl(struct adapter *adap, unsigned char *input)
 #if IS_ENABLED(CONFIG_IPV6)
 		/* clear clip entry */
 		if (tx_info->ip_family == AF_INET6)
-			cxgb4_clip_release(tx_info->netdev,
-					(const u32 *)
-					&tx_info->sk->sk_v6_daddr.in6_u.u6_addr8,
-					1);
+			cxgb4_clip_release(tx_info->netdev, (const u32 *)
+					   &tx_info->sk->sk_v6_rcv_saddr,
+					   1);
 #endif
 	}
 
