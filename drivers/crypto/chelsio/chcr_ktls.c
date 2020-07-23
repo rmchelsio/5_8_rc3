@@ -233,6 +233,7 @@ chcr_ktls_tunnel_pkt(struct chcr_ktls_info *tx_info, struct sk_buff *skb,
 			chcr_write_sgl(skb, &q->q, pos, end, skb_offset,
 				       sgl_sdesc->addr, data_len);
 			sgl_sdesc->skb = skb;
+			skb_orphan(skb);
 		}
 	}
 	chcr_txq_advance(&q->q, ndesc);
@@ -470,24 +471,16 @@ static int chcr_setup_connection(struct sock *sk,
 
 	tx_info->atid = atid;
 
-	if (sk->sk_family == AF_INET) {
-		tx_info->ip_family = AF_INET;
+	if (tx_info->ip_family == AF_INET) {
 		ret = chcr_ktls_act_open_req(sk, tx_info, atid);
 #if IS_ENABLED(CONFIG_IPV6)
 	} else {
-		if (!sk->sk_ipv6only &&
-		    ipv6_addr_type(&sk->sk_v6_daddr) == IPV6_ADDR_MAPPED) {
-			tx_info->ip_family = AF_INET;
-			ret = chcr_ktls_act_open_req(sk, tx_info, atid);
-		} else {
-			tx_info->ip_family = AF_INET6;
-			ret = cxgb4_clip_get(tx_info->netdev,
-					     (const u32 *)&sk->sk_v6_rcv_saddr,
-					     1);
-			if (ret)
-				goto out;
-			ret = chcr_ktls_act_open_req6(sk, tx_info, atid);
-		}
+		ret = cxgb4_clip_get(tx_info->netdev, (const u32 *)
+				     &sk->sk_v6_rcv_saddr,
+				     1);
+		if (ret)
+			goto out;
+		ret = chcr_ktls_act_open_req6(sk, tx_info, atid);
 #endif
 	}
 
@@ -578,8 +571,6 @@ void chcr_ktls_dev_del(struct net_device *netdev,
 		return;
 	}
 
-	tx_ctx->chcr_info = NULL;
-
 	/* clear l2t entry */
 	if (tx_info->l2te)
 		cxgb4_l2t_release(tx_info->l2te);
@@ -605,6 +596,8 @@ void chcr_ktls_dev_del(struct net_device *netdev,
 	kvfree(tx_info);
 	/* release module refcount */
 	module_put(THIS_MODULE);
+	tx_ctx->chcr_info = NULL;
+
 }
 
 /*
@@ -638,6 +631,8 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 	adap = pi->adapter;
 	port_stats = &adap->chcr_stats.ktls_port[pi->port_id];
 
+	atomic64_inc(&port_stats->ktls_tx_connection_open);
+
 	if (direction == TLS_OFFLOAD_CTX_DIR_RX) {
 		pr_err("not expecting for RX direction\n");
 		goto out;
@@ -645,8 +640,6 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 
 	if (tx_ctx->chcr_info)
 		goto out;
-
-	atomic64_inc(&port_stats->ktls_tx_connection_open);
 
 	tx_info = kvzalloc(sizeof(*tx_info), GFP_KERNEL);
 	if (!tx_info)
@@ -681,13 +674,17 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 	/* get peer ip */
 	if (sk->sk_family == AF_INET) {
 		memcpy(daaddr, &sk->sk_daddr, 4);
+		tx_info->ip_family = AF_INET;
 #if IS_ENABLED(CONFIG_IPV6)
 	} else {
 		if (!sk->sk_ipv6only &&
-		    ipv6_addr_type(&sk->sk_v6_daddr) == IPV6_ADDR_MAPPED)
+		    ipv6_addr_type(&sk->sk_v6_daddr) == IPV6_ADDR_MAPPED) {
 			memcpy(daaddr, &sk->sk_daddr, 4);
-		else
+			tx_info->ip_family = AF_INET;
+		} else {
 			memcpy(daaddr, sk->sk_v6_daddr.in6_u.u6_addr8, 16);
+			tx_info->ip_family = AF_INET6;
+		}
 #endif
 	}
 
@@ -1306,6 +1303,9 @@ static int chcr_ktls_xmit_wr_complete(struct sk_buff *skb,
 	chcr_write_sgl(skb, &q->q, pos, end, skb_offset, sgl_sdesc->addr,
 		       data_len);
 	sgl_sdesc->skb = skb;
+	/* no need to call skb destructor on local skb */
+	if (skb_offset)
+		skb_orphan(skb);
 
 	chcr_txq_advance(&q->q, ndesc);
 	cxgb4_ring_tx_db(adap, &q->q, ndesc);
@@ -1494,6 +1494,7 @@ static int chcr_ktls_xmit_wr_short(struct sk_buff *skb,
 	/* send the complete packet except the header */
 	chcr_write_sgl(skb, &q->q, pos, end, skb_offset, sgl_sdesc->addr,
 		       data_len);
+	skb_orphan(skb);
 	sgl_sdesc->skb = skb;
 
 	chcr_txq_advance(&q->q, ndesc);
@@ -1552,10 +1553,11 @@ static int chcr_end_part_handler(struct chcr_ktls_info *tx_info,
 	struct sk_buff *nskb = NULL;
 	bool last_pkt = false;
 
-	pr_debug("%s: tcp_seq 0x%x skb_offset 0x%x tls_end_offset 0x%x skb->len 0x%x last_pkt 0x%x\n",
-		__func__, tcp_seq, skb_offset, tls_end_offset, skb->len, last_pkt);
 	if (skb_offset + tls_end_offset == skb->len)
 		last_pkt = true;
+
+	pr_debug("%s: seq 0x%x offset 0x%x end_offset 0x%x skb_len 0x%x last %d\n",
+		__func__, tcp_seq, skb_offset, tls_end_offset, skb->len, last_pkt);
 	/* check if it is a complete record */
 	if (tls_end_offset == record->len) {
 		nskb = skb;
@@ -1705,6 +1707,8 @@ static int chcr_short_record_handler(struct chcr_ktls_info *tx_info,
 				i++;
 			}
 			f = &record->frags[i];
+
+			local_bh_disable();
 			vaddr = kmap_atomic(skb_frag_page(f));
 
 			data = vaddr + skb_frag_off(f)  + remaining;
@@ -1724,6 +1728,7 @@ static int chcr_short_record_handler(struct chcr_ktls_info *tx_info,
 				       data, (prior_data_len - frag_delta));
 				kunmap_atomic(vaddr);
 			}
+			local_bh_enable();
 			/* reset tcp_seq as per the prior_data_required len */
 			tcp_seq -= prior_data_len;
 		}
@@ -1822,6 +1827,7 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 		if (ret)
 			goto out;
 	}
+
 
 
 	/* TCP segments can be in received either complete or partial.
