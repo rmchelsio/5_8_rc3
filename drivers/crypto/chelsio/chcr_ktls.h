@@ -27,6 +27,7 @@
 
 struct chcr_ktls_info {
 	struct sock *sk;
+	spinlock_t lock; /* state machine lock */
 	struct ktls_key_ctx key_ctx;
 	struct adapter *adap;
 	struct l2t_entry *l2te;
@@ -53,6 +54,7 @@ struct chcr_ktls_info {
 	u8 port_id;
 	u8 ip_family;
 	u8 first_qset;
+	bool conn_up;
 	bool open_pending;
 };
 

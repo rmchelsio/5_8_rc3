@@ -751,6 +751,9 @@ struct ulptx_sgl;
 
 struct tx_sw_desc {
 	struct sk_buff *skb; /* SKB to free after getting completion */
+#ifdef CONFIG_CHELSIO_TLS_DEVICE
+	struct sk_buff *skb_old;
+#endif
 	dma_addr_t addr[MAX_SKB_FRAGS + 1]; /* DMA mapped addresses */
 };
 
