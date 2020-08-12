@@ -181,8 +181,8 @@ chcr_ktls_tunnel_pkt(struct chcr_ktls_info *tx_info, struct sk_buff *skb,
 			   TXPKT_INTF_V(tx_info->tx_chan) |
 			   TXPKT_PF_V(tx_info->adap->pf));
 	cpl->pack = 0;
-	cntrl1 = TXPKT_CSUM_TYPE_V(skb_shinfo(skb)->gso_type & SKB_GSO_TCPV6 ? 
-				   TX_CSUM_TCPIP6 : TX_CSUM_TCPIP);
+	cntrl1 = TXPKT_CSUM_TYPE_V(tx_info->ip_family == AF_INET ?
+				   TX_CSUM_TCPIP : TX_CSUM_TCPIP6);
 	cntrl1 |= T6_TXPKT_ETHHDR_LEN_V(maclen - ETH_HLEN) |
 		  TXPKT_IPHDR_LEN_V(iplen);
 	/* checksum offload */
@@ -1855,9 +1855,6 @@ int chcr_ktls_sw_fallback(struct sk_buff *skb, struct chcr_ktls_info *tx_info,
 	if (!nskb)
 		return 0;
 
-	if (nskb == skb)
-		goto out;
-
 	th = tcp_hdr(nskb);
 	skb_offset =  skb_transport_offset(nskb) + tcp_hdrlen(nskb);
 	data_len = nskb->len - skb_offset;
@@ -1950,7 +1947,11 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 		if (unlikely(tls_record_is_start_marker(record))) {
 			spin_unlock_irqrestore(&tx_ctx->base.lock, flags);
 			atomic64_inc(&port_stats->ktls_tx_skip_no_sync_data);
-			goto out;
+			/* it could be only plaintext or it could be plaintext
+			 * (CCS) + first encrypted record (finished), let sw
+			 * handle it.
+			 */
+			return chcr_ktls_sw_fallback(skb, tx_info, q);
 		}
 
 

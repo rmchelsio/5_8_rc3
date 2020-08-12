@@ -1431,11 +1431,10 @@ static netdev_tx_t cxgb4_eth_xmit(struct sk_buff *skb, struct net_device *dev)
 #endif /* CHELSIO_IPSEC_INLINE */
 
 #ifdef CONFIG_CHELSIO_TLS_DEVICE
-	/* send to chcr uld if decrypted bit is set, skb has socket and it is
-	 * tx offloaded, and if packet has some data bytes to send it for
+	/* if socket is tls offloaded, and packet has some data bytes, send for
 	 * encryption.
 	 */
-	if (skb->decrypted && skb->sk && tls_is_sk_tx_device_offloaded(skb->sk)
+	if (skb->sk && tls_is_sk_tx_device_offloaded(skb->sk)
 	    && (skb->len - (skb_transport_offset(skb) + tcp_hdrlen(skb))))
 		return adap->uld[CXGB4_ULD_CRYPTO].tx_handler(skb, dev);
 #endif /* CHELSIO_TLS_DEVICE */
