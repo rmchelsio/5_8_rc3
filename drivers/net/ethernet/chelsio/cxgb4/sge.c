@@ -328,12 +328,6 @@ void free_tx_desc(struct adapter *adap, struct sge_txq *q,
 			}
 			dev_consume_skb_any(d->skb);
 			d->skb = NULL;
-#ifdef CONFIG_CHELSIO_TLS_DEVICE
-			if (d->skb_old) {
-				dev_consume_skb_any(d->skb_old);
-				d->skb_old = NULL;
-			}
-#endif
 		}
 		++d;
 		if (++cidx == q->size) {

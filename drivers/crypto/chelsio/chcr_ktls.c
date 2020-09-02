@@ -105,33 +105,20 @@ done:
 
 int
 chcr_ktls_tunnel_pkt(struct chcr_ktls_info *tx_info, struct sk_buff *skb,
-		     struct sge_eth_txq *q, u32 data_len, u32 skb_offset,
-		     u32 tcp_seq)
+		     struct sge_eth_txq *q)
 {
-	u32 ctrl, iplen, maclen, wr_mid = 0, imm_len = 0;
+	u32 ctrl, iplen, maclen, wr_mid = 0;
 	int credits, last_desc, len16;
 	struct tx_sw_desc *sgl_sdesc;
 	struct fw_eth_tx_pkt_wr *wr;
 	struct cpl_tx_pkt_core *cpl;
-#if IS_ENABLED(CONFIG_IPV6)
-	struct ipv6hdr *ip6;
-#endif
 	unsigned int flits, ndesc;
-	struct tcphdr *tcp;
-	struct iphdr *ip;
-	u8 buf[150] = {0};
 	void *pos;
 	u64 cntrl1, *end;
 
-	if (skb->len == data_len)
-		imm_len = 0;
-	else
-		imm_len = skb_transport_offset(skb) + tcp_hdrlen(skb);
-
-	ctrl = sizeof(*cpl) + imm_len;
+	ctrl = sizeof(*cpl);
 	flits = DIV_ROUND_UP(sizeof(*wr) + ctrl, 8);
-	if (data_len)
-		flits += chcr_sgl_len(skb_shinfo(skb)->nr_frags + 1);
+	flits += chcr_sgl_len(skb_shinfo(skb)->nr_frags + 1);
 	len16 = DIV_ROUND_UP(flits, 2);
 	/* check how many descriptors needed */
 	ndesc = DIV_ROUND_UP(flits, 8);
@@ -147,17 +134,16 @@ chcr_ktls_tunnel_pkt(struct chcr_ktls_info *tx_info, struct sk_buff *skb,
 		wr_mid |= FW_WR_EQUEQ_F | FW_WR_EQUIQ_F;
 	}
 
-	if (data_len) {
-		last_desc = q->q.pidx + ndesc - 1;
-		if (last_desc >= q->q.size)
-			last_desc -= q->q.size;
-		sgl_sdesc = &q->q.sdesc[last_desc];
-		if (unlikely(cxgb4_map_skb(tx_info->adap->pdev_dev, skb,
-						sgl_sdesc->addr) < 0)) {
-			memset(sgl_sdesc->addr, 0, sizeof(sgl_sdesc->addr));
-			q->mapping_err++;
-			return NETDEV_TX_BUSY;
-		}
+	last_desc = q->q.pidx + ndesc - 1;
+	if (last_desc >= q->q.size)
+		last_desc -= q->q.size;
+	sgl_sdesc = &q->q.sdesc[last_desc];
+
+	if (unlikely(cxgb4_map_skb(tx_info->adap->pdev_dev, skb,
+					sgl_sdesc->addr) < 0)) {
+		memset(sgl_sdesc->addr, 0, sizeof(sgl_sdesc->addr));
+		q->mapping_err++;
+		return NETDEV_TX_BUSY;
 	}
 
 	iplen = skb_network_header_len(skb);
@@ -187,40 +173,12 @@ chcr_ktls_tunnel_pkt(struct chcr_ktls_info *tx_info, struct sk_buff *skb,
 		  TXPKT_IPHDR_LEN_V(iplen);
 	/* checksum offload */
 	cpl->ctrl1 = cpu_to_be64(cntrl1);
-	if (skb->len == data_len)
-		cpl->len = htons(skb->len);
-	else
-		cpl->len = htons(data_len + imm_len);
+	cpl->len = htons(skb->len);
 
 	pos = cpl + 1;
 
-	if (skb->len == data_len) {
-		cxgb4_write_sgl(skb, &q->q, pos, end, skb_offset,
-                                sgl_sdesc->addr);
-		sgl_sdesc->skb = skb;
-	} else {
-		memcpy(buf, skb->data, imm_len);
-		if (tx_info->ip_family == AF_INET) {
-			/* we need to correct ip header len */
-			ip = (struct iphdr *)(buf + maclen);
-			ip->tot_len = htons(data_len + imm_len - maclen);
-
-#if IS_ENABLED(CONFIG_IPV6)
-		} else {
-			ip6 = (struct ipv6hdr *)(buf + maclen);
-			ip6->payload_len = htons(data_len + imm_len - iplen -
-						 maclen);
-#endif
-		}
-		tcp = (struct tcphdr *)(buf + maclen + iplen);
-
-		if (!tcp->fin)
-			tcp->psh = 0;
-
-		tcp->seq = htonl(tcp_seq);
-
-		chcr_copy_to_txd(buf, &q->q, pos, imm_len);
-	}
+	cxgb4_write_sgl(skb, &q->q, pos, end, 0, sgl_sdesc->addr);
+	sgl_sdesc->skb = skb;
 	chcr_txq_advance(&q->q, ndesc);
 	cxgb4_ring_tx_db(tx_info->adap, &q->q, ndesc);
 	return 0;
@@ -1123,13 +1081,99 @@ chcr_ktls_check_tcp_options(struct tcphdr *tcp)
  * @q - TX queue.
  * return: NETDEV_TX_OK/NETDEV_TX_BUSY.
  */
-static int
-chcr_ktls_write_tcp_options(struct chcr_ktls_info *tx_info, struct sk_buff *skb,
-			    struct sge_eth_txq *q, u32 tcp_seq)
-{
-	return chcr_ktls_tunnel_pkt(tx_info, skb, q, 0, 0, tcp_seq);
-}
 
+static int chcr_ktls_write_tcp_options(struct chcr_ktls_info *tx_info,
+				       struct sk_buff *skb,
+				       struct sge_eth_txq *q, bool fin)
+{
+        u32 ctrl, iplen, maclen, wr_mid = 0, imm_len, ndesc;
+        int credits, len16;
+        struct fw_eth_tx_pkt_wr *wr;
+        struct cpl_tx_pkt_core *cpl;
+#if IS_ENABLED(CONFIG_IPV6)
+        struct ipv6hdr *ip6;
+#endif
+        struct tcphdr *tcp;
+        u8 buf[150] = {0};
+        struct iphdr *ip;
+        u64 cntrl1;
+        void *pos;
+
+        imm_len = skb_transport_offset(skb) + tcp_hdrlen(skb);
+
+        ctrl = sizeof(*cpl) + imm_len;
+        len16 = DIV_ROUND_UP(sizeof(*wr) + ctrl, 16);
+        /* check how many descriptors needed */
+        ndesc = DIV_ROUND_UP(len16, 4);
+
+        credits = chcr_txq_avail(&q->q) - ndesc;
+	if (unlikely(credits < 0)) {
+		chcr_eth_txq_stop(q);
+		return NETDEV_TX_BUSY;
+	}
+
+        if (unlikely(credits < ETHTXQ_STOP_THRES)) {
+                chcr_eth_txq_stop(q);
+                wr_mid |= FW_WR_EQUEQ_F | FW_WR_EQUIQ_F;
+        }
+
+        iplen = skb_network_header_len(skb);
+        maclen = skb_mac_header_len(skb);
+
+        pos = &q->q.desc[q->q.pidx];
+        wr = pos;
+
+        /* Firmware work request header */
+        wr->op_immdlen = htonl(FW_WR_OP_V(FW_ETH_TX_PKT_WR) |
+                        FW_WR_IMMDLEN_V(ctrl));
+
+        wr->equiq_to_len16 = htonl(wr_mid | FW_WR_LEN16_V(len16));
+        wr->r3 = 0;
+
+        cpl = (void *)(wr + 1);
+
+        /* CPL header */
+        cpl->ctrl0 = htonl(TXPKT_OPCODE_V(CPL_TX_PKT) |
+                        TXPKT_INTF_V(tx_info->tx_chan) |
+                        TXPKT_PF_V(tx_info->adap->pf));
+        cpl->pack = 0;
+        cpl->len = htons(imm_len);
+
+        memcpy(buf, skb->data, imm_len);
+        if (tx_info->ip_family == AF_INET) {
+                /* we need to correct ip header len */
+                ip = (struct iphdr *)(buf + maclen);
+                ip->tot_len = htons(imm_len - maclen);
+                cntrl1 = TXPKT_CSUM_TYPE_V(TX_CSUM_TCPIP);
+
+#if IS_ENABLED(CONFIG_IPV6)
+        } else {
+                ip6 = (struct ipv6hdr *)(buf + maclen);
+                ip6->payload_len = htons(imm_len - iplen - maclen);
+                cntrl1 = TXPKT_CSUM_TYPE_V(TX_CSUM_TCPIP6);
+#endif
+        }
+        cntrl1 |= T6_TXPKT_ETHHDR_LEN_V(maclen - ETH_HLEN) |
+                TXPKT_IPHDR_LEN_V(iplen);
+        /* checksum offload */
+        cpl->ctrl1 = cpu_to_be64(cntrl1);
+
+        pos = cpl + 1;
+
+        tcp = (struct tcphdr *)(buf + maclen + iplen);
+
+        if (!fin) {
+                tcp->psh = 0;
+                tcp->fin = 0;
+        } else {
+                tcp->seq = htonl(tx_info->prev_seq);
+        }
+
+        chcr_copy_to_txd(buf, &q->q, pos, imm_len);
+        chcr_txq_advance(&q->q, ndesc);
+        cxgb4_ring_tx_db(tx_info->adap, &q->q, ndesc);
+        return 0;
+}
 
 /*
  * chcr_ktls_xmit_wr_complete: This sends out the complete record. If an skb
@@ -1144,12 +1188,11 @@ chcr_ktls_write_tcp_options(struct chcr_ktls_info *tx_info, struct sk_buff *skb,
  * return: NETDEV_TX_BUSY/NET_TX_OK.
  */
 static int chcr_ktls_xmit_wr_complete(struct sk_buff *skb,
-				      bool is_last_record,
-				      bool is_local_skb,
+				      bool is_last_wr,
 				      struct chcr_ktls_info *tx_info,
 				      struct sge_eth_txq *q, u32 tcp_seq,
 				      bool tcp_push, u32 mss, u32 data_len,
-				      u32 skb_offset, struct sk_buff *old)
+				      u32 skb_offset)
 {
 	u32 len16, wr_mid = 0, flits = 0, ndesc, cipher_start;
 	struct adapter *adap = tx_info->adap;
@@ -1193,8 +1236,8 @@ static int chcr_ktls_xmit_wr_complete(struct sk_buff *skb,
 		return NETDEV_TX_BUSY;
 	}
 
-	if (!is_last_record)
-		skb_get(old);
+	if (!is_last_wr)
+		skb_get(skb);
 
 
 	pos = &q->q.desc[q->q.pidx];
@@ -1293,8 +1336,6 @@ static int chcr_ktls_xmit_wr_complete(struct sk_buff *skb,
 	chcr_write_sgl(skb, &q->q, pos, end, skb_offset, sgl_sdesc->addr,
 		       data_len);
 	sgl_sdesc->skb = skb;
-	if (is_local_skb)
-		sgl_sdesc->skb_old = old;
 
 	chcr_txq_advance(&q->q, ndesc);
 	cxgb4_ring_tx_db(adap, &q->q, ndesc);
@@ -1606,7 +1647,8 @@ static int chcr_ktls_tx_plaintxt(struct chcr_ktls_info *tx_info,
  * @record - specific record which has complete 16k record in frags.
  */
 static void chcr_ktls_copy_record_in_skb(struct sk_buff *nskb,
-					 struct tls_record_info *record)
+					 struct tls_record_info *record,
+					 struct sk_buff *skb)
 {
 	int i = 0;
 
@@ -1620,6 +1662,9 @@ static void chcr_ktls_copy_record_in_skb(struct sk_buff *nskb,
 	nskb->data_len += record->len;
 	nskb->len += record->len;
 	nskb->truesize += record->len;
+	nskb->sk = skb->sk;
+	nskb->destructor = skb->destructor;
+	refcount_add(nskb->truesize, &nskb->sk->sk_wmem_alloc);
 }
 
 /*
@@ -1648,11 +1693,11 @@ static int chcr_end_part_handler(struct chcr_ktls_info *tx_info,
 				 u32 skb_offset)
 {
 	struct sk_buff *nskb = NULL;
-	bool is_last_record = false, is_local_skb = false;
+	bool is_last_wr = false;
 	int ret;
 
 	if (skb_offset + tls_end_offset == skb->len)
-		is_last_record = true;
+		is_last_wr = true;
 
 	/* check if it is a complete record */
 	if (tls_end_offset == record->len) {
@@ -1669,22 +1714,26 @@ static int chcr_end_part_handler(struct chcr_ktls_info *tx_info,
 		}
 
 		/* copy complete record in skb */
-		chcr_ktls_copy_record_in_skb(nskb, record);
+		chcr_ktls_copy_record_in_skb(nskb, record, skb);
 		/* packet is being sent from the beginning, update the tcp_seq
 		 * accordingly.
 		 */
 		tcp_seq = tls_record_start_seq(record);
 		/* reset skb offset */
 		skb_offset = 0;
-		is_local_skb = true;
+
+		if (is_last_wr)
+			dev_kfree_skb_any(skb);
+
+		is_last_wr = true;
 
 		atomic64_inc(&tx_info->adap->chcr_stats.ktls_tx_end_pkts);
 	}
 
-	ret = chcr_ktls_xmit_wr_complete(nskb, is_last_record, is_local_skb,
+	ret = chcr_ktls_xmit_wr_complete(nskb, is_last_wr,
 					 tx_info, q, tcp_seq,
-					 (is_last_record && tcp_push_no_fin),
-					 mss, record->len, skb_offset, skb);
+					 (is_last_wr && tcp_push_no_fin),
+					 mss, record->len, skb_offset);
 	if (ret)
 		goto out;
 
@@ -1758,6 +1807,7 @@ static int chcr_short_record_handler(struct chcr_ktls_info *tx_info,
 					  tcp_push_no_fin, q, data_len,
 					  skb_offset))
 			goto out;
+
 		tx_info->prev_seq = tcp_seq + data_len;
 		return 0;
 
@@ -1802,7 +1852,6 @@ static int chcr_short_record_handler(struct chcr_ktls_info *tx_info,
 			}
 			f = &record->frags[i];
 
-			local_bh_disable();
 			vaddr = kmap_atomic(skb_frag_page(f));
 
 			data = vaddr + skb_frag_off(f)  + remaining;
@@ -1822,7 +1871,6 @@ static int chcr_short_record_handler(struct chcr_ktls_info *tx_info,
 				       data, (prior_data_len - frag_delta));
 				kunmap_atomic(vaddr);
 			}
-			local_bh_enable();
 			/* reset tcp_seq as per the prior_data_required len */
 			tcp_seq -= prior_data_len;
 		}
@@ -1833,8 +1881,9 @@ static int chcr_short_record_handler(struct chcr_ktls_info *tx_info,
 
 	if (chcr_ktls_xmit_wr_short(skb, tx_info, q, tcp_seq, tcp_push_no_fin,
 				    mss, tls_rec_offset, prior_data,
-				    prior_data_len, data_len, skb_offset))
+				    prior_data_len, data_len, skb_offset)) {
 		goto out;
+	}
 
 	tx_info->prev_seq = tcp_seq + data_len + prior_data_len;
 	return 0;
@@ -1860,8 +1909,7 @@ int chcr_ktls_sw_fallback(struct sk_buff *skb, struct chcr_ktls_info *tx_info,
 	data_len = nskb->len - skb_offset;
 	skb_tx_timestamp(nskb);
 
-	if (chcr_ktls_tunnel_pkt(tx_info, nskb, q, nskb->len,
-				 0, ntohl(th->seq)))
+	if (chcr_ktls_tunnel_pkt(tx_info, nskb, q))
 		goto out;
 
 	tx_info->prev_seq = ntohl(th->seq) + data_len;
@@ -1921,17 +1969,13 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 	cxgb4_reclaim_completed_tx(adap, &q->q, true);
 	skb_tx_timestamp(skb);
 
-	/* TCP segments can be in received either complete or partial.
-	 * chcr_end_part_handler will handle cases if complete record or end
-	 * part of the record is received. Incase of partial end part of record,
-	 * we will send the complete record again.
+	/* TCP segments can be received either complete or partial. Incase of
+	 * partial end part of record, we will send the complete record again.
 	 */
+	/* lock taken */
+	spin_lock_irqsave(&tx_ctx->base.lock, flags);
 
 	do {
-		int i;
-
-		/* lock taken */
-		spin_lock_irqsave(&tx_ctx->base.lock, flags);
 		/* fetch the tls record */
 		record = tls_get_record(&tx_ctx->base, tcp_seq,
 					&tx_info->record_no);
@@ -1954,16 +1998,6 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 			return chcr_ktls_sw_fallback(skb, tx_info, q);
 		}
 
-
-		/* increase page reference count of the record, so that there
-		 * won't be any chance of page free in middle if in case stack
-		 * receives ACK and try to delete the record.
-		 */
-		for (i = 0; i < record->num_frags; i++)
-			__skb_frag_ref(&record->frags[i]);
-		/* lock cleared */
-		spin_unlock_irqrestore(&tx_ctx->base.lock, flags);
-
 		tls_end_offset = record->end_seq - tcp_seq;
 
 		pr_debug("seq 0x%x, end_seq 0x%x prev_seq 0x%x, datalen 0x%x tls_end_offset 0x%x start seq 0x%x\n",
@@ -1981,13 +2015,12 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 			 */
 			if (!th->fin && chcr_ktls_check_tcp_options(th)) {
 				ret = chcr_ktls_write_tcp_options(tx_info, skb,
-								  q, tx_max);
+								  q, false);
 				if (ret) {
-					dev_kfree_skb_any(skb);
-					goto clear_ref;
+					spin_unlock_irqrestore(&tx_ctx->base.lock, flags);
+					goto out;
 				}
 			}
-
 
 			ret = chcr_ktls_xmit_tcb_cpls(tx_info, q, tx_max,
 						      ntohl(th->ack_seq),
@@ -1995,9 +2028,12 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 						      tls_end_offset !=
 						      record->len);
 			if (ret) {
-				dev_kfree_skb_any(skb);
-				goto clear_ref;
+				spin_unlock_irqrestore(&tx_ctx->base.lock, flags);
+				goto out;
 			}
+
+			if (th->fin)
+				skb_get(skb);
 		}
 
 		/* if a tls record is finishing in this SKB */
@@ -2022,15 +2058,14 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 							skb_offset);
 			data_len = 0;
 		}
-clear_ref:
-		/* clear the frag ref count which increased locally before */
-		for (i = 0; i < record->num_frags; i++) {
-			/* clear the frag ref count */
-			__skb_frag_unref(&record->frags[i]);
-		}
 
 		/* if any failure, come out from the loop. */
 		if (ret) {
+			spin_unlock_irqrestore(&tx_ctx->base.lock, flags);
+			/* clear the extra ref count taken if fin is set. */
+			if (th->fin)
+				dev_kfree_skb_any(skb);
+
 			if (ret == EFALLBACK)
 				return chcr_ktls_sw_fallback(skb, tx_info, q);
 
@@ -2042,14 +2077,17 @@ clear_ref:
 
 	} while (data_len > 0);
 
+	spin_unlock_irqrestore(&tx_ctx->base.lock, flags);
 	atomic64_inc(&port_stats->ktls_tx_encrypted_packets);
 	atomic64_add(skb_data_len, &port_stats->ktls_tx_encrypted_bytes);
 
 	/* tcp finish is set, send a separate tcp msg including all the options
 	 * as well.
 	 */
-	if (th->fin)
-		chcr_ktls_write_tcp_options(tx_info, skb, q, tx_info->prev_seq);
+	if (th->fin) {
+		ret = chcr_ktls_write_tcp_options(tx_info, skb, q, true);
+		dev_kfree_skb_any(skb);
+	}
 
 	return NETDEV_TX_OK;
 out:

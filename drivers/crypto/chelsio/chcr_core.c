@@ -248,7 +248,7 @@ int chcr_uld_tx_handler(struct sk_buff *skb, struct net_device *dev)
 	 * ipsec packet.
 	 */
 #ifdef CONFIG_CHELSIO_TLS_DEVICE
-	if (skb->decrypted || (skb->sk && tls_is_sk_tx_device_offloaded(skb->sk)))
+	if (skb->sk && tls_is_sk_tx_device_offloaded(skb->sk))
 		return chcr_ktls_xmit(skb, dev);
 #endif
 #ifdef CONFIG_CHELSIO_IPSEC_INLINE
