@@ -6,6 +6,35 @@
 #include "chcr_ktls.h"
 #include "clip_tbl.h"
 
+static int chcr_get_nfrags_to_send(struct sk_buff *skb, u32 start)
+{
+        u32 skb_linear_data_len = skb->len - skb->data_len;
+        u32 nfrags, from = 0, frag_size;
+        skb_frag_t *frag;
+
+        /* if its a linear skb then return 1 */
+        if (!skb->data_len)
+                return 1;
+
+        if (likely(start < skb_linear_data_len)) {
+                nfrags = skb_shinfo(skb)->nr_frags + 1;
+
+        } else {
+                start -= skb_linear_data_len;
+                /* find the first frag */
+                while (from < skb_shinfo(skb)->nr_frags) {
+                        frag = &skb_shinfo(skb)->frags[from];
+                        frag_size = skb_frag_size(frag);
+                        if (start < frag_size)
+                                break;
+                        start -= frag_size;
+                        from++;
+                }
+                BUG_ON(from >= skb_shinfo(skb)->nr_frags);
+                nfrags = skb_shinfo(skb)->nr_frags - from;
+        }
+        return nfrags;
+}
 void chcr_write_sgl(const struct sk_buff *skb, struct sge_txq *q,
                      struct ulptx_sgl *sgl, u64 *end, unsigned int start,
                      const dma_addr_t *addr, unsigned int send_len)
@@ -126,7 +155,7 @@ chcr_ktls_tunnel_pkt(struct chcr_ktls_info *tx_info, struct sk_buff *skb,
 	credits = chcr_txq_avail(&q->q) - ndesc;
 	if (unlikely(credits < 0)) {
 		chcr_eth_txq_stop(q);
-		return NETDEV_TX_BUSY;
+		return -ENOMEM;
 	}
 
 	if (unlikely(credits < ETHTXQ_STOP_THRES)) {
@@ -143,7 +172,7 @@ chcr_ktls_tunnel_pkt(struct chcr_ktls_info *tx_info, struct sk_buff *skb,
 					sgl_sdesc->addr) < 0)) {
 		memset(sgl_sdesc->addr, 0, sizeof(sgl_sdesc->addr));
 		q->mapping_err++;
-		return NETDEV_TX_BUSY;
+		return -ENOMEM;
 	}
 
 	iplen = skb_network_header_len(skb);
@@ -951,7 +980,7 @@ static int chcr_ktls_xmit_tcb_cpls(struct chcr_ktls_info *tx_info,
 	credits = chcr_txq_avail(&q->q) - ndesc;
 	if (unlikely(credits < 0)) {
 		chcr_eth_txq_stop(q);
-		return NETDEV_TX_BUSY;
+		return -ENOMEM;
 	}
 
 	if (unlikely(credits < ETHTXQ_STOP_THRES)) {
@@ -1022,18 +1051,6 @@ static int chcr_ktls_xmit_tcb_cpls(struct chcr_ktls_info *tx_info,
 		cxgb4_ring_tx_db(tx_info->adap, &q->q, ndesc);
 	}
 	return 0;
-}
-
-/*
- * chcr_ktls_get_tx_flits
- * returns number of flits to be sent out, it includes key context length, WR
- * size and skb fragments.
- */
-static unsigned int
-chcr_ktls_get_tx_flits(const struct sk_buff *skb, unsigned int key_ctx_len)
-{
-	return chcr_sgl_len(skb_shinfo(skb)->nr_frags + 1) +
-	       DIV_ROUND_UP(key_ctx_len + CHCR_KTLS_WR_SIZE, 8);
 }
 
 /*
@@ -1109,7 +1126,7 @@ static int chcr_ktls_write_tcp_options(struct chcr_ktls_info *tx_info,
         credits = chcr_txq_avail(&q->q) - ndesc;
 	if (unlikely(credits < 0)) {
 		chcr_eth_txq_stop(q);
-		return NETDEV_TX_BUSY;
+		return -ENOMEM;
 	}
 
         if (unlikely(credits < ETHTXQ_STOP_THRES)) {
@@ -1192,7 +1209,7 @@ static int chcr_ktls_xmit_wr_complete(struct sk_buff *skb,
 				      struct chcr_ktls_info *tx_info,
 				      struct sge_eth_txq *q, u32 tcp_seq,
 				      bool tcp_push, u32 mss, u32 data_len,
-				      u32 skb_offset)
+				      u32 skb_offset, u32 nfrags)
 {
 	u32 len16, wr_mid = 0, flits = 0, ndesc, cipher_start;
 	struct adapter *adap = tx_info->adap;
@@ -1207,14 +1224,15 @@ static int chcr_ktls_xmit_wr_complete(struct sk_buff *skb,
 	u64 *end;
 
 	/* get the number of flits required */
-	flits = chcr_ktls_get_tx_flits(skb, tx_info->key_ctx_len);
+	flits = chcr_sgl_len(nfrags) +
+		DIV_ROUND_UP(tx_info->key_ctx_len + CHCR_KTLS_WR_SIZE, 8);
 	/* number of descriptors */
 	ndesc = chcr_flits_to_desc(flits);
 	/* check if enough credits available */
 	credits = chcr_txq_avail(&q->q) - ndesc;
 	if (unlikely(credits < 0)) {
 		chcr_eth_txq_stop(q);
-		return NETDEV_TX_BUSY;
+		return -ENOMEM;
 	}
 
 	if (unlikely(credits < ETHTXQ_STOP_THRES)) {
@@ -1233,7 +1251,7 @@ static int chcr_ktls_xmit_wr_complete(struct sk_buff *skb,
 	if (unlikely(cxgb4_map_skb(adap->pdev_dev, skb, sgl_sdesc->addr) < 0)) {
 		memset(sgl_sdesc->addr, 0, sizeof(sgl_sdesc->addr));
 		q->mapping_err++;
-		return NETDEV_TX_BUSY;
+		return -ENOMEM;
 	}
 
 	if (!is_last_wr)
@@ -1370,7 +1388,7 @@ static int chcr_ktls_xmit_wr_short(struct sk_buff *skb,
 				   u32 skb_offset)
 {
 	struct adapter *adap = tx_info->adap;
-	u32 len16, wr_mid = 0, cipher_start;
+	u32 len16, wr_mid = 0, cipher_start, nfrags;
 	unsigned int flits = 0, ndesc;
 	int credits, left, last_desc;
 	struct tx_sw_desc *sgl_sdesc;
@@ -1383,10 +1401,13 @@ static int chcr_ktls_xmit_wr_short(struct sk_buff *skb,
 	void *pos;
 	u64 *end;
 
+	nfrags = chcr_get_nfrags_to_send(skb, skb_offset);
+	flits = chcr_sgl_len(nfrags) +
+		DIV_ROUND_UP(tx_info->key_ctx_len + CHCR_KTLS_WR_SIZE, 8);
 	/* get the number of flits required, it's a partial record so 2 flits
 	 * (AES_BLOCK_SIZE) will be added.
 	 */
-	flits = chcr_ktls_get_tx_flits(skb, tx_info->key_ctx_len) + 2;
+	flits += 2;
 	/* get the correct 8 byte IV of this record */
 	iv_record = cpu_to_be64(tx_info->iv + tx_info->record_no);
 	/* If it's a middle record and not 16 byte aligned to run AES CTR, need
@@ -1401,7 +1422,7 @@ static int chcr_ktls_xmit_wr_short(struct sk_buff *skb,
 	credits = chcr_txq_avail(&q->q) - ndesc;
 	if (unlikely(credits < 0)) {
 		chcr_eth_txq_stop(q);
-		return NETDEV_TX_BUSY;
+		return -ENOMEM;
 	}
 
 	if (unlikely(credits < ETHTXQ_STOP_THRES)) {
@@ -1417,7 +1438,7 @@ static int chcr_ktls_xmit_wr_short(struct sk_buff *skb,
 	if (unlikely(cxgb4_map_skb(adap->pdev_dev, skb, sgl_sdesc->addr) < 0)) {
 		memset(sgl_sdesc->addr, 0, sizeof(sgl_sdesc->addr));
 		q->mapping_err++;
-		return NETDEV_TX_BUSY;
+		return -ENOMEM;
 	}
 
 	pos = &q->q.desc[q->q.pidx];
@@ -1552,7 +1573,7 @@ static int chcr_ktls_tx_plaintxt(struct chcr_ktls_info *tx_info,
                                  u32 data_len, u32 skb_offset)
 {
         int credits, left, len16, last_desc;
-        unsigned int flits = 0, ndesc;
+        unsigned int flits = 0, ndesc, nfrags;
         struct tx_sw_desc *sgl_sdesc;
         struct cpl_tx_data *tx_data;
         struct ulptx_idata *idata;
@@ -1563,7 +1584,9 @@ static int chcr_ktls_tx_plaintxt(struct chcr_ktls_info *tx_info,
         u64 *end;
 
         flits = DIV_ROUND_UP(CHCR_PLAIN_TX_DATA_LEN, 8);
-        flits += chcr_sgl_len(skb_shinfo(skb)->nr_frags);
+        nfrags = chcr_get_nfrags_to_send(skb, skb_offset);
+
+        flits += chcr_sgl_len(nfrags);
         /* WR will need len16 */
         len16 = DIV_ROUND_UP(flits, 2);
         /* check how many descriptors needed */
@@ -1572,7 +1595,7 @@ static int chcr_ktls_tx_plaintxt(struct chcr_ktls_info *tx_info,
         credits = chcr_txq_avail(&q->q) - ndesc;
         if (unlikely(credits < 0)) {
                 chcr_eth_txq_stop(q);
-                return NETDEV_TX_BUSY;
+                return -ENOMEM;
         }
 
         if (unlikely(credits < ETHTXQ_STOP_THRES)) {
@@ -1589,7 +1612,7 @@ static int chcr_ktls_tx_plaintxt(struct chcr_ktls_info *tx_info,
                                    sgl_sdesc->addr) < 0)) {
                 memset(sgl_sdesc->addr, 0, sizeof(sgl_sdesc->addr));
                 q->mapping_err++;
-                return NETDEV_TX_BUSY;
+                return -ENOMEM;
         }
 
         pos = &q->q.desc[q->q.pidx];
@@ -1710,7 +1733,7 @@ static int chcr_end_part_handler(struct chcr_ktls_info *tx_info,
 		nskb = alloc_skb(0, GFP_KERNEL);
 		if (!nskb) {
 			dev_kfree_skb_any(skb);
-			return NETDEV_TX_BUSY;
+			return -ENOMEM;
 		}
 
 		/* copy complete record in skb */
@@ -1733,7 +1756,8 @@ static int chcr_end_part_handler(struct chcr_ktls_info *tx_info,
 	ret = chcr_ktls_xmit_wr_complete(nskb, is_last_wr,
 					 tx_info, q, tcp_seq,
 					 (is_last_wr && tcp_push_no_fin),
-					 mss, record->len, skb_offset);
+					 mss, record->len, skb_offset,
+					 record->num_frags);
 	if (ret)
 		goto out;
 
@@ -1742,7 +1766,7 @@ static int chcr_end_part_handler(struct chcr_ktls_info *tx_info,
 	return 0;
 out:
 	dev_kfree_skb_any(nskb);
-	return NETDEV_TX_BUSY;
+	return ret;
 }
 
 /*
@@ -1889,7 +1913,7 @@ static int chcr_short_record_handler(struct chcr_ktls_info *tx_info,
 	return 0;
 out:
 	dev_kfree_skb_any(skb);
-	return NETDEV_TX_BUSY;
+	return -ENOMEM;
 }
 
 int chcr_ktls_sw_fallback(struct sk_buff *skb, struct chcr_ktls_info *tx_info,
