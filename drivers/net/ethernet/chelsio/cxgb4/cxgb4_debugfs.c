@@ -3465,11 +3465,11 @@ DEFINE_SHOW_ATTRIBUTE(meminfo);
 
 static int chcr_stats_show(struct seq_file *seq, void *v)
 {
-	struct adapter *adap = seq->private;
-#ifdef CONFIG_CHELSIO_TLS_DEVICE
-	struct chcr_stats_ktls_port_debug *ktls_port;
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
+	struct ch_ktls_port_stats_debug *ktls_port;
 	int i = 0;
 #endif
+	struct adapter *adap = seq->private;
 
 	seq_puts(seq, "Chelsio Crypto Accelerator Stats \n");
 	seq_printf(seq, "Cipher Ops: %10u \n",
@@ -3492,28 +3492,26 @@ static int chcr_stats_show(struct seq_file *seq, void *v)
 		   atomic_read(&adap->chcr_stats.tls_pdu_rx));
 	seq_printf(seq, "TLS Keys (DDR) Count: %10u\n",
 		   atomic_read(&adap->chcr_stats.tls_key));
-#ifdef CONFIG_CHELSIO_TLS_DEVICE
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 	seq_puts(seq, "\nChelsio KTLS Crypto Accelerator Stats\n");
 	seq_printf(seq, "Tx TLS offload refcount:          %20u\n",
 		   refcount_read(&adap->chcr_ktls.ktls_refcount));
 	seq_printf(seq, "Tx records send:                  %20llu\n",
-		   atomic64_read(&adap->chcr_stats.ktls_tx_send_records));
+		   atomic64_read(&adap->ch_ktls_stats.ktls_tx_send_records));
 	seq_printf(seq, "Tx partial start of records:      %20llu\n",
-		   atomic64_read(&adap->chcr_stats.ktls_tx_start_pkts));
+		   atomic64_read(&adap->ch_ktls_stats.ktls_tx_start_pkts));
 	seq_printf(seq, "Tx partial middle of records:     %20llu\n",
-		   atomic64_read(&adap->chcr_stats.ktls_tx_middle_pkts));
+		   atomic64_read(&adap->ch_ktls_stats.ktls_tx_middle_pkts));
 	seq_printf(seq, "Tx partial end of record:         %20llu\n",
-		   atomic64_read(&adap->chcr_stats.ktls_tx_end_pkts));
+		   atomic64_read(&adap->ch_ktls_stats.ktls_tx_end_pkts));
 	seq_printf(seq, "Tx complete records:              %20llu\n",
-		   atomic64_read(&adap->chcr_stats.ktls_tx_complete_pkts));
+		   atomic64_read(&adap->ch_ktls_stats.ktls_tx_complete_pkts));
 	seq_printf(seq, "TX trim pkts :                    %20llu\n",
-		   atomic64_read(&adap->chcr_stats.ktls_tx_trimmed_pkts));
+		   atomic64_read(&adap->ch_ktls_stats.ktls_tx_trimmed_pkts));
 	seq_printf(seq, "TX sw fallback :                  %20llu\n",
-		   atomic64_read(&adap->chcr_stats.ktls_tx_fallback));
-	seq_printf(seq, "TX linear skb :                   %20llu\n",
-		   atomic64_read(&adap->chcr_stats.ktls_tx_linear_skb));
+		   atomic64_read(&adap->ch_ktls_stats.ktls_tx_fallback));
 	while (i < MAX_NPORTS) {
-		ktls_port = &adap->chcr_stats.ktls_port[i];
+		ktls_port = &adap->ch_ktls_stats.ktls_port[i];
 		seq_printf(seq, "Port %d\n", i);
 		seq_printf(seq, "Tx connection created:            %20llu\n",
 			   atomic64_read(&ktls_port->ktls_tx_connection_open));

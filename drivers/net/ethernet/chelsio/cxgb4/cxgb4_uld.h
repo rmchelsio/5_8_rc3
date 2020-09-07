@@ -302,6 +302,7 @@ enum cxgb4_uld {
 	CXGB4_ULD_ISCSIT,
 	CXGB4_ULD_CRYPTO,
 	CXGB4_ULD_TLS,
+	CXGB4_ULD_KTLS,
 	CXGB4_ULD_MAX
 };
 
@@ -360,8 +361,8 @@ struct cxgb4_virt_res {                      /* virtualized HW resources */
 	struct cxgb4_range ppod_edram;
 };
 
-#ifdef CONFIG_CHELSIO_TLS_DEVICE
-struct chcr_stats_ktls_port_debug {
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
+struct ch_ktls_port_stats_debug {
        atomic64_t ktls_tx_connection_open;
        atomic64_t ktls_tx_connection_fail;
        atomic64_t ktls_tx_connection_close;
@@ -372,6 +373,17 @@ struct chcr_stats_ktls_port_debug {
        atomic64_t ktls_tx_skip_no_sync_data;
        atomic64_t ktls_tx_drop_no_sync_data;
        atomic64_t ktls_tx_drop_bypass_req;
+};
+struct ch_ktls_stats_debug {
+	struct ch_ktls_port_stats_debug ktls_port[4 /*MAX_NPORTS*/];
+	atomic64_t ktls_tx_send_records;
+	atomic64_t ktls_tx_end_pkts;
+	atomic64_t ktls_tx_start_pkts;
+	atomic64_t ktls_tx_middle_pkts;
+	atomic64_t ktls_tx_retransmit_pkts;
+	atomic64_t ktls_tx_complete_pkts;
+	atomic64_t ktls_tx_trimmed_pkts;
+	atomic64_t ktls_tx_fallback;
 };
 #endif
 
@@ -387,18 +399,6 @@ struct chcr_stats_debug {
 	atomic_t tls_pdu_tx;
 	atomic_t tls_pdu_rx;
 	atomic_t tls_key;
-#ifdef CONFIG_CHELSIO_TLS_DEVICE
-	struct chcr_stats_ktls_port_debug ktls_port[4 /*MAX_NPORTS*/];
-	atomic64_t ktls_tx_send_records;
-	atomic64_t ktls_tx_end_pkts;
-	atomic64_t ktls_tx_start_pkts;
-	atomic64_t ktls_tx_middle_pkts;
-	atomic64_t ktls_tx_complete_pkts;
-	atomic64_t ktls_tx_trimmed_pkts;
-	atomic64_t ktls_tx_fallback;
-	atomic64_t ktls_tx_linear_skb;
-
-#endif
 };
 
 #define OCQ_WIN_OFFSET(pdev, vres) \

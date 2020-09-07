@@ -259,7 +259,7 @@ static void collect_sge_port_stats(const struct adapter *adap,
 	const struct sge_eth_txq *tx = &adap->sge.ethtxq[p->first_qset];
 	const struct sge_eth_rxq *rx = &adap->sge.ethrxq[p->first_qset];
 #ifdef CONFIG_CHELSIO_TLS_DEVICE
-	const struct chcr_stats_ktls_port_debug *ktls_stats;
+	const struct ch_ktls_port_stat_debug *ktls_stats;
 #endif
 	struct sge_eohw_txq *eohw_tx;
 	unsigned int i;
@@ -286,7 +286,7 @@ static void collect_sge_port_stats(const struct adapter *adap,
 		}
 	}
 #ifdef CONFIG_CHELSIO_TLS_DEVICE
-	ktls_stats = &adap->chcr_stats.ktls_port[p->port_id];
+	ktls_stats = &adap->ch_ktls_stats.ktls_port[p->port_id];
 	s->tx_tls_encrypted_packets =
 		atomic64_read(&ktls_stats->ktls_tx_encrypted_packets);
 	s->tx_tls_encrypted_bytes =

@@ -66,7 +66,7 @@
 #include <linux/crash_dump.h>
 #include <net/udp_tunnel.h>
 #include <net/xfrm.h>
-#if defined(CONFIG_CHELSIO_TLS_DEVICE)
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 #include <net/tls.h>
 #endif
 
@@ -1164,7 +1164,7 @@ static u16 cxgb_select_queue(struct net_device *dev, struct sk_buff *skb,
 		txq = netdev_pick_tx(dev, skb, sb_dev);
 		if (xfrm_offload(skb) || is_ptp_enabled(skb, dev) ||
 		    skb->encapsulation ||
-#if CONFIG_CHELSIO_TLS_DEVICE
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 		    skb->decrypted ||
 #endif
 		    (proto != IPPROTO_TCP && proto != IPPROTO_UDP))
@@ -1307,7 +1307,7 @@ int cxgb4_alloc_atid(struct tid_info *t, void *data, u16 uld)
 	/* if ktls connection is up, don't give atid to any other
 	 * ULD, so that no connection should be allowed to be up.
 	 */
-	if (uld && uld != CXGB4_ULD_CRYPTO &&
+	if (uld && uld != CXGB4_ULD_KTLS &&
 			refcount_read(&adap->chcr_ktls.ktls_refcount)) {
 		dev_err(adap->pdev_dev, "ktls is up, can't use offload\n");
 		return atid;
@@ -1359,7 +1359,7 @@ int cxgb4_alloc_stid(struct tid_info *t, int family, void *data, u16 uld)
 	 * ULD, so that no connection should be allowed to be up.
 	 */
 	stid = -1;
-	if (uld && uld != CXGB4_ULD_CRYPTO &&
+	if (uld && uld != CXGB4_ULD_KTLS &&
 	    refcount_read(&adap->chcr_ktls.ktls_refcount)) {
 		dev_err(adap->pdev_dev, "ktls is up, can't use offload\n");
 		return stid;
@@ -6102,7 +6102,7 @@ static int cxgb4_iov_configure(struct pci_dev *pdev, int num_vfs)
 }
 #endif /* CONFIG_PCI_IOV */
 
-#if defined(CONFIG_CHELSIO_TLS_DEVICE)
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 
 static int cxgb4_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 			      enum tls_offload_ctx_dir direction,
@@ -6113,7 +6113,7 @@ static int cxgb4_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 	int ret = 0;
 
 	mutex_lock(&uld_mutex);
-	if (!adap->uld[CXGB4_ULD_CRYPTO].handle) {
+	if (!adap->uld[CXGB4_ULD_KTLS].handle) {
 #if defined(CONFIG_DYNAMIC_DEBUG)
 		dev_dbg(adap->pdev_dev, "chcr driver is not loaded\n");
 #endif
@@ -6121,7 +6121,7 @@ static int cxgb4_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 		goto out_unlock;
 	}
 
-	if (!adap->uld[CXGB4_ULD_CRYPTO].tlsdev_ops) {
+	if (!adap->uld[CXGB4_ULD_KTLS].tlsdev_ops) {
 		dev_err(adap->pdev_dev,
 			"chcr driver has no registered tlsdev_ops()\n");
 		ret = -EOPNOTSUPP;
@@ -6132,7 +6132,7 @@ static int cxgb4_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 	if (ret)
 		goto out_unlock;
 
-	ret = adap->uld[CXGB4_ULD_CRYPTO].tlsdev_ops->tls_dev_add(netdev, sk,
+	ret = adap->uld[CXGB4_ULD_KTLS].tlsdev_ops->tls_dev_add(netdev, sk,
 								  direction,
 								  crypto_info,
 								  tcp_sn);
@@ -6152,20 +6152,20 @@ static void cxgb4_ktls_dev_del(struct net_device *netdev,
 	struct adapter *adap = netdev2adap(netdev);
 
 	mutex_lock(&uld_mutex);
-	if (!adap->uld[CXGB4_ULD_CRYPTO].handle) {
+	if (!adap->uld[CXGB4_ULD_KTLS].handle) {
 #if defined(CONFIG_DYNAMIC_DEBUG)
 		dev_dbg(adap->pdev_dev, "chcr driver is not loaded\n");
 #endif
 		goto out_unlock;
 	}
 
-	if (!adap->uld[CXGB4_ULD_CRYPTO].tlsdev_ops) {
+	if (!adap->uld[CXGB4_ULD_KTLS].tlsdev_ops) {
 		dev_err(adap->pdev_dev,
 			"chcr driver has no registered tlsdev_ops\n");
 		goto out_unlock;
 	}
 
-	adap->uld[CXGB4_ULD_CRYPTO].tlsdev_ops->tls_dev_del(netdev, tls_ctx,
+	adap->uld[CXGB4_ULD_KTLS].tlsdev_ops->tls_dev_del(netdev, tls_ctx,
 							    direction);
 	cxgb4_set_ktls_feature(adap, FW_PARAMS_PARAM_DEV_KTLS_HW_DISABLE);
 
@@ -6428,7 +6428,7 @@ static int init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 			netdev->hw_features |= NETIF_F_HIGHDMA;
 		netdev->features |= netdev->hw_features;
 		netdev->vlan_features = netdev->features & VLAN_FEAT;
-#if defined(CONFIG_CHELSIO_TLS_DEVICE)
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 		if (pi->adapter->params.crypto & FW_CAPS_CONFIG_TLS_HW) {
 			netdev->hw_features |= NETIF_F_HW_TLS_TX;
 			netdev->tlsdev_ops = &cxgb4_ktls_ops;
