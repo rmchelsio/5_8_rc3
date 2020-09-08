@@ -1298,12 +1298,12 @@ static int setup_debugfs(struct adapter *adap)
 int cxgb4_alloc_atid(struct tid_info *t, void *data, u16 uld)
 {
 
-#if defined(CONFIG_CHELSIO_TLS_DEVICE)
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 	struct adapter *adap = container_of(t, struct adapter, tids);
 #endif
 	int atid = -1;
 
-#if defined(CONFIG_CHELSIO_TLS_DEVICE)
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 	/* if ktls connection is up, don't give atid to any other
 	 * ULD, so that no connection should be allowed to be up.
 	 */
@@ -1349,12 +1349,12 @@ EXPORT_SYMBOL(cxgb4_free_atid);
  */
 int cxgb4_alloc_stid(struct tid_info *t, int family, void *data, u16 uld)
 {
-#if defined(CONFIG_CHELSIO_TLS_DEVICE)
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 	struct adapter *adap = container_of(t, struct adapter, tids);
 #endif
 	int stid;
 
-#if defined(CONFIG_CHELSIO_TLS_DEVICE)
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 	/* if ktls connection is up, don't give stid to any other
 	 * ULD, so that no connection should be allowed to be up.
 	 */

@@ -98,7 +98,7 @@ static const char stats_strings[][ETH_GSTRING_LEN] = {
 	"vlan_insertions        ",
 	"gro_packets            ",
 	"gro_merged             ",
-#ifdef CONFIG_CHELSIO_TLS_DEVICE
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 	"tx_tls_encrypted_packets",
 	"tx_tls_encrypted_bytes  ",
 	"tx_tls_ctx              ",
@@ -233,7 +233,7 @@ struct queue_port_stats {
 	u64 vlan_ins;
 	u64 gro_pkts;
 	u64 gro_merged;
-#ifdef CONFIG_CHELSIO_TLS_DEVICE
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 	u64 tx_tls_encrypted_packets;
 	u64 tx_tls_encrypted_bytes;
 	u64 tx_tls_ctx;
@@ -258,8 +258,8 @@ static void collect_sge_port_stats(const struct adapter *adap,
 {
 	const struct sge_eth_txq *tx = &adap->sge.ethtxq[p->first_qset];
 	const struct sge_eth_rxq *rx = &adap->sge.ethrxq[p->first_qset];
-#ifdef CONFIG_CHELSIO_TLS_DEVICE
-	const struct ch_ktls_port_stat_debug *ktls_stats;
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
+	const struct ch_ktls_port_stats_debug *ktls_stats;
 #endif
 	struct sge_eohw_txq *eohw_tx;
 	unsigned int i;
@@ -285,7 +285,7 @@ static void collect_sge_port_stats(const struct adapter *adap,
 			s->vlan_ins += eohw_tx->vlan_ins;
 		}
 	}
-#ifdef CONFIG_CHELSIO_TLS_DEVICE
+#if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
 	ktls_stats = &adap->ch_ktls_stats.ktls_port[p->port_id];
 	s->tx_tls_encrypted_packets =
 		atomic64_read(&ktls_stats->ktls_tx_encrypted_packets);
