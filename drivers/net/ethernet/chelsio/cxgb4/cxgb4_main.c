@@ -1165,7 +1165,7 @@ static u16 cxgb_select_queue(struct net_device *dev, struct sk_buff *skb,
 		if (xfrm_offload(skb) || is_ptp_enabled(skb, dev) ||
 		    skb->encapsulation ||
 #if IS_ENABLED(CONFIG_CHELSIO_TLS_DEVICE)
-		    skb->decrypted ||
+		    (skb->sk && tls_is_sk_tx_device_offloaded(skb->sk)) ||
 #endif
 		    (proto != IPPROTO_TCP && proto != IPPROTO_UDP))
 			txq = txq % pi->nqsets;
@@ -6115,7 +6115,7 @@ static int cxgb4_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 	mutex_lock(&uld_mutex);
 	if (!adap->uld[CXGB4_ULD_KTLS].handle) {
 #if defined(CONFIG_DYNAMIC_DEBUG)
-		dev_dbg(adap->pdev_dev, "chcr driver is not loaded\n");
+		dev_dbg(adap->pdev_dev, "ch_ktls driver is not loaded\n");
 #endif
 		ret = -EOPNOTSUPP;
 		goto out_unlock;
@@ -6123,7 +6123,7 @@ static int cxgb4_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 
 	if (!adap->uld[CXGB4_ULD_KTLS].tlsdev_ops) {
 		dev_err(adap->pdev_dev,
-			"chcr driver has no registered tlsdev_ops()\n");
+			"ch_ktls driver has no registered tlsdev_ops()\n");
 		ret = -EOPNOTSUPP;
 		goto out_unlock;
 	}
@@ -6154,14 +6154,14 @@ static void cxgb4_ktls_dev_del(struct net_device *netdev,
 	mutex_lock(&uld_mutex);
 	if (!adap->uld[CXGB4_ULD_KTLS].handle) {
 #if defined(CONFIG_DYNAMIC_DEBUG)
-		dev_dbg(adap->pdev_dev, "chcr driver is not loaded\n");
+		dev_dbg(adap->pdev_dev, "ch_ktls driver is not loaded\n");
 #endif
 		goto out_unlock;
 	}
 
 	if (!adap->uld[CXGB4_ULD_KTLS].tlsdev_ops) {
 		dev_err(adap->pdev_dev,
-			"chcr driver has no registered tlsdev_ops\n");
+			"ch_ktls driver has no registered tlsdev_ops\n");
 		goto out_unlock;
 	}
 
