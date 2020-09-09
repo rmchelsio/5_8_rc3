@@ -14,7 +14,7 @@
 
 #define CHCR_KTLS_DRV_MODULE_NAME "ch_ktls"
 #define CHCR_KTLS_DRV_VERSION "1.0.0.0-ko"
-#define CHCR_KTLS_DRV_DESC "Chelsio T6 NIC TLS ULD Driver"
+#define CHCR_KTLS_DRV_DESC "Chelsio NIC TLS Driver"
 
 #define CHCR_TCB_STATE_CLOSED	0
 #define CHCR_KTLS_KEY_CTX_LEN	16
