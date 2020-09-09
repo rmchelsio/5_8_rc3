@@ -460,7 +460,7 @@ static int chcr_setup_connection(struct sock *sk,
 				     &sk->sk_v6_rcv_saddr,
 				     1);
 		if (ret)
-			goto out;
+			return ret;
 		ret = chcr_ktls_act_open_req6(sk, tx_info, atid);
 #endif
 	}
@@ -484,7 +484,6 @@ static int chcr_setup_connection(struct sock *sk,
 		}
 	}
 
-out:
 	return ret;
 }
 
@@ -2233,7 +2232,7 @@ static void __exit chcr_ktls_exit(void)
 module_init(chcr_ktls_init);
 module_exit(chcr_ktls_exit);
 
-MODULE_DESCRIPTION("Crypto nic TLS for Chelsio Terminator cards.");
+MODULE_DESCRIPTION("Chelsio NIC TLS Driver");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Chelsio Communications");
 MODULE_VERSION(CHCR_KTLS_DRV_VERSION);
