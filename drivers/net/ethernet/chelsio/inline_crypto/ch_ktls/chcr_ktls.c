@@ -2019,16 +2019,6 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 			goto out;
 		}
 
-		if (unlikely(tls_record_is_start_marker(record))) {
-			spin_unlock_irqrestore(&tx_ctx->base.lock, flags);
-			atomic64_inc(&port_stats->ktls_tx_skip_no_sync_data);
-			/* it could be only plaintext or it could be plaintext
-			 * (CCS) + first encrypted record (finished), let sw
-			 * handle it.
-			 */
-			return chcr_ktls_sw_fallback(skb, tx_info, q);
-		}
-
 		tls_end_offset = record->end_seq - tcp_seq;
 
 		pr_debug("seq 0x%x, end_seq 0x%x prev_seq 0x%x, datalen 0x%x tls_end_offset 0x%x start seq 0x%x\n",
@@ -2038,7 +2028,8 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 		/* update tcb for the skb */
 		if (skb_data_len == data_len) {
 			u32 tx_max = tcp_seq;
-			if (tls_end_offset < TLS_CIPHER_AES_GCM_128_TAG_SIZE)
+			if (!tls_record_is_start_marker(record) &&
+			    tls_end_offset < TLS_CIPHER_AES_GCM_128_TAG_SIZE)
 				tx_max = record->end_seq - 
 					 TLS_CIPHER_AES_GCM_128_TAG_SIZE;
 			/* if tcp options are set but finish is not send the
@@ -2065,6 +2056,36 @@ int chcr_ktls_xmit(struct sk_buff *skb, struct net_device *dev)
 
 			if (th->fin)
 				skb_get(skb);
+		}
+
+		if (unlikely(tls_record_is_start_marker(record))) {
+			atomic64_inc(&port_stats->ktls_tx_skip_no_sync_data);
+			/* If tls_end_offset < data_len, means there is some
+			 * data after start marker, which needs encryption, send
+			 * plaintext first and take skb refcount. else send out
+			 * complete pkt as plaintext.
+			 */
+			if (tls_end_offset < data_len)
+				skb_get(skb);
+			else
+				tls_end_offset = data_len;
+
+			ret = chcr_ktls_tx_plaintxt(tx_info, skb, tcp_seq, mss,
+						    (!th->fin && th->psh), q,
+						    tls_end_offset, skb_offset);
+			if (ret) {
+				/* free the refcount taken earlier */
+				if (tls_end_offset < data_len)
+					dev_kfree_skb_any(skb);
+				spin_unlock_irqrestore(&tx_ctx->base.lock,
+						       flags);
+				goto out;
+			}
+
+			data_len -= tls_end_offset;
+			tcp_seq = record->end_seq;
+			skb_offset += tls_end_offset;
+			continue;
 		}
 
 		/* if a tls record is finishing in this SKB */
