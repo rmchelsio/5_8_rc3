@@ -959,10 +959,12 @@ ssize_t splice_direct_to_actor(struct file *in, struct splice_desc *sd,
 		 * If this is the last data and SPLICE_F_MORE was not set
 		 * initially, clears it.
 		 */
-		if (read_len < len)
-			sd->flags |= SPLICE_F_MORE;
-		else if (!more)
+		if (read_len < len) {
+			if (pos < i_size_read(file_inode(in)))
+				sd->flags |= SPLICE_F_MORE;
+		 } else if (!more) {
 			sd->flags &= ~SPLICE_F_MORE;
+		 }
 		/*
 		 * NOTE: nonblocking mode only applies to the input. We
 		 * must not do the output in nonblocking mode as then we

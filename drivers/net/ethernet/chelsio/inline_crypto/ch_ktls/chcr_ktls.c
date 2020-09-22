@@ -710,7 +710,7 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
 		goto put_module;
 
 	/* Wait for reply */
-        wait_for_completion(&tx_info->completion);
+        wait_for_completion_timeout(&tx_info->completion, 30 * HZ);
         if (tx_info->open_pending)
                 goto put_module;
 
@@ -722,7 +722,7 @@ int chcr_ktls_dev_add(struct net_device *netdev, struct sock *sk,
                goto free_tid;
 
        /* Wait for reply */
-        wait_for_completion(&tx_info->completion);
+        wait_for_completion_timeout(&tx_info->completion, 30 * HZ);
         if (tx_info->open_pending)
                 goto free_tid;
 
@@ -2238,11 +2238,14 @@ static int __init chcr_ktls_init(void)
 static void __exit chcr_ktls_exit(void)
 {
 	struct chcr_ktls_uld_ctx *u_ctx, *tmp;
+	struct adapter *adap;
 
 	pr_info("driver unloaded\n");
 
 	mutex_lock(&dev_mutex);
 	list_for_each_entry_safe(u_ctx, tmp, &uld_ctx_list, entry) {
+		adap = pci_get_drvdata(u_ctx->lldi.pdev);
+                memset(&adap->ch_ktls_stats, 0, sizeof(adap->ch_ktls_stats));
 		list_del(&u_ctx->entry);
 		kfree(u_ctx);
 	}
