@@ -492,11 +492,11 @@ handle_error:
 		if (!size) {
 last_record:
 			tls_push_record_flags = flags;
-			if (more) {
-				tls_ctx->pending_open_record_frags =
-						!!record->num_frags;
+			/* set/clear pending_open_record_frags based on more */
+			tls_ctx->pending_open_record_frags = !!more;
+
+			if (more)
 				break;
-			}
 
 			done = true;
 		}
